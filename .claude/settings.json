@@ -1,0 +1,36 @@
+{
+  "env": {
+    "GODOT": "D:/Godot_v4.7.2-stable_win64.exe/Godot_v4.7.2-stable_win64_console.exe"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(\"$GODOT\" *)",
+      "Bash(D:/Godot_v4.7.2-stable_win64.exe/Godot_v4.7.2-stable_win64_console.exe *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git tag *)"
+    ],
+    "deny": [
+      "Edit(/Archive/**)",
+      "Edit(/Ref_PD_Games/**)",
+      "Edit(/Ref_UI/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect_reference.sh\""}]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check_edit.sh\"", "timeout": 60, "statusMessage": "Checking the edit..."}]
+      }
+    ]
+  }
+}

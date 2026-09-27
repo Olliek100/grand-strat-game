@@ -1,0 +1,27 @@
+{
+	"first_foothold": {"label": "Room to Breathe", "category": "Expand", "description": "Hold 8 districts.", "condition": {"type": "districts_held", "amount": 8}, "renown": 5},
+	"growing_crew": {"label": "A Name in the Ruins", "category": "Expand", "description": "Hold 12 districts.", "condition": {"type": "districts_held", "amount": 12}, "renown": 10},
+	"city_power": {"label": "City Power", "category": "Expand", "description": "Hold 18 districts.", "condition": {"type": "districts_held", "amount": 18}, "renown": 20},
+	"safe_streets": {"label": "Safe Streets", "category": "Expand", "description": "Hold 4 Secured districts.", "condition": {"type": "secured_districts", "amount": 4}, "renown": 5},
+	"stronghold": {"label": "Stronghold", "category": "Expand", "description": "Hold 10 Secured districts.", "condition": {"type": "secured_districts", "amount": 10}, "renown": 15},
+
+	"first_brick": {"label": "First Brick", "category": "Build", "description": "Own a finished building.", "condition": {"type": "buildings_owned", "amount": 1}, "renown": 5},
+	"rebuilders": {"label": "Rebuilders", "category": "Build", "description": "Own 6 buildings.", "condition": {"type": "buildings_owned", "amount": 6}, "renown": 10},
+	"new_city": {"label": "A New City", "category": "Build", "description": "Own 14 buildings.", "condition": {"type": "buildings_owned", "amount": 14}, "renown": 20},
+	"industry": {"label": "Industry Returns", "category": "Build", "description": "Own a Workshop.", "condition": {"type": "building_type", "building": "workshop", "amount": 1}, "renown": 10},
+	"open_market": {"label": "Open for Business", "category": "Build", "description": "Own 2 Markets.", "condition": {"type": "building_type", "building": "market", "amount": 2}, "renown": 10},
+
+	"handshake": {"label": "Handshake", "category": "Diplomacy", "description": "Hold a trade agreement.", "condition": {"type": "trade_agreements", "amount": 1}, "renown": 5},
+	"trade_hub": {"label": "Trade Hub", "category": "Diplomacy", "description": "Hold 3 trade agreements at once.", "condition": {"type": "trade_agreements", "amount": 3}, "renown": 15},
+	"sworn_friends": {"label": "Sworn Friends", "category": "Diplomacy", "description": "Hold a defensive alliance.", "condition": {"type": "alliances", "amount": 1}, "renown": 10},
+	"protector": {"label": "Protector", "category": "Diplomacy", "description": "Take a vassal.", "condition": {"type": "vassals", "amount": 1}, "renown": 15},
+
+	"crew_of_forty": {"label": "A Real Crew", "category": "People", "description": "Have 40 crew (idle and away).", "condition": {"type": "crew_total", "amount": 40}, "renown": 5},
+	"crew_of_eighty": {"label": "An Army of Survivors", "category": "People", "description": "Have 80 crew.", "condition": {"type": "crew_total", "amount": 80}, "renown": 15},
+	"reputation": {"label": "Reputation", "category": "People", "description": "Be known for 2 traits at once.", "condition": {"type": "traits_active", "amount": 2}, "renown": 10},
+	"thousand_souls": {"label": "A Thousand Souls", "category": "People", "description": "Hold districts with 1,000 people living in them.", "condition": {"type": "population", "amount": 1000}, "renown": 15},
+
+	"taken_by_force": {"label": "Taken by Force", "category": "War", "description": "Take a district by Assault.", "condition": {"type": "districts_conquered", "amount": 1}, "renown": 10},
+	"conqueror": {"label": "Conqueror", "category": "War", "description": "Take 5 districts by Assault.", "condition": {"type": "districts_conquered", "amount": 5}, "renown": 20},
+	"victor": {"label": "Victor", "category": "War", "description": "End a war with the enemy more exhausted than you.", "condition": {"type": "wars_won", "amount": 1}, "renown": 15}
+}

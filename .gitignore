@@ -1,0 +1,15 @@
+# Godot's cache (rebuilt on import)
+.godot/
+# Old build folders: frozen history, kept locally only
+Archive/
+v1.*/
+# Paradox game files and screenshots: copyrighted reference material, never published
+Ref_PD_Games/
+Ref_UI/
+# Scratch files from tools and tests
+game/_*.gd
+game/_*.gd.uid
+game/_*.tscn
+*.tmp
+# Local-only Claude Code settings
+.claude/settings.local.json

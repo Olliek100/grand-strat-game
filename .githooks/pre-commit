@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Nothing untested gets committed: when game code or data changed, run the regression tests.
+GODOT="${GODOT:-D:/Godot_v4.7.2-stable_win64.exe/Godot_v4.7.2-stable_win64_console.exe}"
+if git diff --cached --name-only | grep -qE '^game/.*\.(gd|json)$'; then
+	echo "pre-commit: running regression tests..."
+	if ! "$GODOT" --headless --path game --script res://tests/spine_test.gd 2>&1 | grep -q "ALL PASSED"; then
+		echo "pre-commit: tests failed. Run /test to see which." >&2
+		exit 1
+	fi
+fi
+exit 0

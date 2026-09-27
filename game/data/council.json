@@ -1,0 +1,37 @@
+{
+	"posts": {
+		"war_chief": {"label": "War Chief", "skill": "command", "summary": "Plans raids and assaults"},
+		"quartermaster": {"label": "Quartermaster", "skill": "stewardship", "summary": "Plans settling, scavenging, trade runs and relief"},
+		"envoy": {"label": "Envoy", "skill": "diplomacy", "summary": "Plans negotiations; other factions listen to them"},
+		"fixer": {"label": "Fixer", "skill": "cunning", "summary": "Plans agitation and dirty work"}
+	},
+	"loyalty": {
+		"appointed": {"label": "Given a council seat", "decay": 0.04, "limit": 20},
+		"dismissed": {"label": "Removed from the council", "decay": 0.04, "limit": 30},
+		"passed_over": {"label": "Passed over for a seat", "decay": 0.05, "limit": 25},
+		"glory": {"label": "Led a triumph", "decay": 0.03, "limit": 20},
+		"wounded_in_service": {"label": "Wounded on your orders", "decay": 0.05, "limit": 20},
+		"unpaid": {"label": "Wages unpaid", "decay": 0.1, "limit": 30},
+		"comrade_lost": {"label": "Lost a comrade", "decay": 0.05, "limit": 15},
+		"comrade_dismissed": {"label": "Saw a comrade thrown out", "decay": 0.05, "limit": 15},
+		"new_leader": {"label": "Unsure of the new leader", "decay": 0.03, "limit": 20},
+		"passed_over_rule": {"label": "Passed over for the leadership", "decay": 0.02, "limit": 30}
+	},
+	"traits": {
+		"veteran": {"label": "Veteran", "kind": "earned", "description": "Has led 5 ventures: +5% odds on anything they lead", "odds": 1.05},
+		"hero": {"label": "Hero", "kind": "earned", "description": "3 triumphs: more of their successes become triumphs, and the crew love them (+10 loyalty)", "triumph_share": 0.04, "loyalty": 10},
+		"scarred": {"label": "Scarred", "kind": "earned", "description": "Wounded and came back harder: +8% on Command ventures, -5% on Diplomacy ones", "skill_odds": {"command": 1.08, "diplomacy": 0.95}},
+		"shaken": {"label": "Shaken", "kind": "earned", "description": "Survived a disaster: -8% odds until their next triumph", "odds": 0.92},
+		"ambitious": {"label": "Ambitious", "kind": "personality", "opposite": "steadfast", "description": "Wants power: -18 loyalty unless on the council; more likely to contest a succession", "loyalty_off_council": -18},
+		"steadfast": {"label": "Steadfast", "kind": "personality", "opposite": "ambitious", "description": "Loyal by nature: +15 loyalty", "loyalty": 15},
+		"brave": {"label": "Brave", "kind": "personality", "opposite": "craven", "description": "Leads from the front: +8% on Command ventures. As leader, pulls the faction toward Militaristic", "skill_odds": {"command": 1.08}, "faction_trait": "Militaristic"},
+		"craven": {"label": "Craven", "kind": "personality", "opposite": "brave", "description": "Avoids a fight: -8% on Command ventures, +6% on Cunning ones", "skill_odds": {"command": 0.92, "cunning": 1.06}, "faction_trait": "Subversive"},
+		"cruel": {"label": "Cruel", "kind": "personality", "opposite": "kind", "description": "Rules by fear: +5% on Command ventures, -10% on Diplomacy ones. As leader, everyone's loyalty -3", "skill_odds": {"command": 1.05, "diplomacy": 0.9}, "respect": -3, "faction_trait": "Militaristic"},
+		"kind": {"label": "Kind", "kind": "personality", "opposite": "cruel", "description": "Looks after people: +8% on Diplomacy ventures, +5 loyalty. As leader, everyone's loyalty +3 and the faction leans Socialist", "skill_odds": {"diplomacy": 1.08}, "loyalty": 5, "respect": 3, "faction_trait": "Socialist"},
+		"greedy": {"label": "Greedy", "kind": "personality", "opposite": "generous", "description": "Always wants more: +5% on Stewardship ventures, -5 loyalty. As leader, the faction leans Merchant", "skill_odds": {"stewardship": 1.05}, "loyalty": -5, "faction_trait": "Merchant"},
+		"generous": {"label": "Generous", "kind": "personality", "opposite": "greedy", "description": "Shares what there is: +5% on Diplomacy ventures, +5 loyalty. As leader, the faction leans Diplomatic", "skill_odds": {"diplomacy": 1.05}, "loyalty": 5, "faction_trait": "Diplomatic"},
+		"conqueror": {"label": "Conqueror", "kind": "ruling", "description": "Took 3 districts by force as leader: +10% on the faction's Command ventures, everyone's loyalty +3", "faction_skill_odds": {"command": 1.1}, "respect": 3},
+		"builder": {"label": "Builder", "kind": "ruling", "description": "Completed 5 buildings as leader: +10% on the faction's Stewardship ventures", "faction_skill_odds": {"stewardship": 1.1}},
+		"peacemaker": {"label": "Peacemaker", "kind": "ruling", "description": "A year of peace with 2+ treaties as leader: other factions are 15% likelier to accept your proposals", "acceptance": 1.15}
+	}
+}

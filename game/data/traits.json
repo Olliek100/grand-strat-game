@@ -1,0 +1,68 @@
+{
+	"Slaver": {
+		"description": "Raids focus on slavery",
+		"benefit": "+20% raid odds",
+		"cost": "Free factions distrust you",
+		"source": "",
+		"threshold": 30,
+		"venture_odds": {"raid": 1.2},
+		"effects": {},
+		"likes": ["Militaristic"],
+		"dislikes": ["Socialist"]
+	},
+	"Socialist": {
+		"description": "Welfare-focused governance",
+		"benefit": "+20% relief odds; districts you hold calm down faster",
+		"cost": "-20% wealth income; distrusts militarists and slavers",
+		"source": "Relief efforts",
+		"threshold": 30,
+		"venture_odds": {"relief": 1.2},
+		"effects": {"owned_daily_grievance": -0.08, "wealth_income_mult": 0.8},
+		"likes": ["Socialist", "Diplomatic"],
+		"dislikes": ["Slaver", "Militaristic"]
+	},
+	"Militaristic": {
+		"description": "Focus on combat and raids",
+		"benefit": "+25% raid/assault and +15% settle odds; raids and assaults against you are 15% harder",
+		"cost": "Raids cause 30% more grievance; districts you hold grow restless; less interested in pacts",
+		"source": "Launching raids",
+		"threshold": 30,
+		"venture_odds": {"settle": 1.15, "raid": 1.25, "assault": 1.25},
+		"effects": {"defence_mult": 0.85, "hostile_grievance_mult": 1.3, "owned_daily_grievance": 0.05, "aggression_mult": 1.3, "pact_interest_mult": 0.8},
+		"likes": ["Militaristic"],
+		"dislikes": ["Socialist"]
+	},
+	"Merchant": {
+		"description": "Trade-focused economy",
+		"benefit": "+30% trade and +10% settle odds; +30% income from trade agreements",
+		"cost": "-10% raid odds",
+		"source": "Trade runs",
+		"threshold": 30,
+		"venture_odds": {"settle": 1.1, "trade": 1.3, "raid": 0.9},
+		"effects": {"trade_income_mult": 1.3, "trade_interest_mult": 1.3},
+		"likes": ["Merchant", "Diplomatic"],
+		"dislikes": ["Subversive"]
+	},
+	"Subversive": {
+		"description": "Agitation and espionage",
+		"benefit": "+40% agitation odds",
+		"cost": "Rivals see you as a threat and agitate against you more; merchants distrust you",
+		"source": "Agitation",
+		"threshold": 30,
+		"venture_odds": {"agitation": 1.4},
+		"effects": {"draws_agitation_mult": 1.5},
+		"likes": [],
+		"dislikes": []
+	},
+	"Diplomatic": {
+		"description": "Envoys, treaties and negotiation",
+		"benefit": "+25% chance your treaties are accepted; +25% negotiate odds",
+		"cost": "-10% raid and assault odds",
+		"source": "Diplomacy and negotiation",
+		"threshold": 30,
+		"venture_odds": {"negotiate": 1.25, "raid": 0.9, "assault": 0.9},
+		"effects": {"diplomacy_mult": 1.25},
+		"likes": ["Diplomatic", "Merchant"],
+		"dislikes": []
+	}
+}

@@ -1,0 +1,13 @@
+{
+	"gift": {"label": "Sent us gifts", "decay": 0.1, "limit": 40},
+	"raided": {"label": "Raided us", "decay": 0.05, "limit": 40},
+	"caught_agitating": {"label": "Caught stirring unrest in our land", "decay": 0.05, "limit": 40},
+	"declared_war": {"label": "Declared war on us", "decay": 0.04, "limit": 30},
+	"betrayed_trade": {"label": "Attacked us while we traded", "decay": 0.05, "limit": 30},
+	"ended_trade": {"label": "Ended our trade agreement", "decay": 0.08, "limit": 20},
+	"broke_treaty": {"label": "Broke a treaty with us", "decay": 0.02, "limit": 60},
+	"treaty_breaker": {"label": "Known to break treaties", "decay": 0.02, "limit": 40},
+	"released": {"label": "Released us from vassalage", "decay": 0.05, "limit": 20},
+	"declined": {"label": "Turned down our proposal", "decay": 0.1, "limit": 20},
+	"traded_with_us": {"label": "Trades at our market", "decay": 0.04, "limit": 25}
+}

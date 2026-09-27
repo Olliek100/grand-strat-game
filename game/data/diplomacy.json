@@ -1,0 +1,61 @@
+{
+	"envoy": {
+		"label": "Send gifts",
+		"description": "An envoy carries gifts. Their opinion of you rises (less so the more they already like you).",
+		"kind": "gift",
+		"cost": {"wealth": 25},
+		"days": 5,
+		"opinion": 15
+	},
+	"trade": {
+		"label": "Propose trade agreement",
+		"proposal": "a trade agreement",
+		"description": "Both sides earn wealth every day, more for each district where your borders touch and each Market you own. Needs a connection: your territories must touch, or you both need a Market.",
+		"kind": "treaty",
+		"treaty": "trade",
+		"cost": {"wealth": 10},
+		"days": 8,
+		"base": 0.55
+	},
+	"pact": {
+		"label": "Propose non-aggression pact",
+		"proposal": "a non-aggression pact",
+		"description": "Neither side can raid, agitate against or declare war on the other while it holds.",
+		"kind": "treaty",
+		"treaty": "pact",
+		"cost": {"wealth": 10},
+		"days": 8,
+		"base": 0.5
+	},
+	"alliance": {
+		"label": "Propose defensive alliance",
+		"proposal": "a defensive alliance",
+		"description": "If either of you is attacked, the other joins the war. Includes a non-aggression pact.",
+		"kind": "treaty",
+		"treaty": "alliance",
+		"cost": {"wealth": 20},
+		"days": 10,
+		"base": 0.3,
+		"min_opinion": 20
+	},
+	"vassalage": {
+		"label": "Demand vassalage",
+		"proposal": "that you become their vassal",
+		"description": "A much weaker faction (under 40% of your strength) accepts your protection: it pays you 20% of its income and joins your wars. Factions that don't feel threatened value their independence.",
+		"kind": "treaty",
+		"treaty": "vassal",
+		"cost": {"wealth": 20},
+		"days": 10,
+		"base": 0.25
+	},
+	"integrate": {
+		"label": "Integrate vassal",
+		"description": "Merge a loyal vassal of at least a year into your faction: its land, crew and stores become yours. Costs more for bigger vassals.",
+		"kind": "integrate",
+		"cost": {"wealth": 60},
+		"cost_per_district": {"wealth": 20},
+		"days": 30,
+		"base": 0.7,
+		"min_opinion": 50
+	}
+}
