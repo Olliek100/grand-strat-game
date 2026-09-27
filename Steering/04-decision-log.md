@@ -2,6 +2,10 @@
 
 Decisions that still stand: each with what was rejected and why. New entries go at the top. Check this before relitigating a settled question. Per-build detail (numbers, tuning, simulation results) is in /CHANGELOG.md.
 
+**2026-09-27 (wording only; no rule changed)**
+
+- **"Shared pool" means shared data, not a shared list.** Each faction has its own National Ambitions: which ones it can pursue depends on its traits, government, tech and situation, so factions see different lists. They are still written once in one data pool, not authored per faction (the 2026-09-25 amendment stands). Docs reworded to say this; National Ambitions and the renown review are S4, not S3 (stale references from the old build order fixed).
+
 **Standing rules established during builds (v1.16–v1.38)**
 
 - **No dead ends (spine rule 5).** Every resource needs a source that doesn't cost that same resource, and every "can't" says what's missing and where to get it. Materials have a renewable source (Recycling Works) and ruins regrow. (v1.28, v1.38)

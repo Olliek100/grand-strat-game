@@ -11,7 +11,8 @@ docs in `Steering/`. The owner judges builds by playing them: show consequences,
 - Traits are earned from behaviour and policy, never chosen from a tree.
 - One verb: every meaningful action is a venture (leader, crew, cost, readable odds, 4 outcome tiers).
 - AI plays by the player's rules, odds and data. No hidden bonuses.
-- No per-faction focus trees; National Ambitions are one shared pool gated by the faction's situation.
+- No authored per-faction focus trees. Each faction has its own National Ambitions, but they come from how it has
+  played: one pool written once in data, each ambition gated by the faction's situation (traits, government, tech).
 - Read `Steering/03-not-doing-list.md` before adding any system. Test every idea against the spine
   (`Steering/08-spine.md`): does it strengthen the loop, the verb or the arc? No dead ends: every resource needs a
   source that doesn't cost itself, and every "can't" says what's missing and where to get it.

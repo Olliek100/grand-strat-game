@@ -28,7 +28,7 @@ Every resource has **one clear source and one clear use**, and every use grows w
 | **Supplies** (food) | Developed districts; gardens; trade | Feeding population and manpower | Survival pressure; grows with population |
 | **Wealth** | Taxes on population; markets; trade | Council wages; diplomacy; venture funding | Grows with population, and so do its costs (wages, administration) |
 | **Manpower** (was "crew") | Population: developed districts produce it | Ventures (away while out; lost on disasters); settlers (gone for good) | The bodies you can send. Named characters are separate: they lead, manpower goes |
-| **Renown** | Triumphs; bold ventures; deeds | **Invested in National Ambitions** (S3): a completed ambition grants a lasting bonus, so renown is spent for a return | The trade-off: renown you hold adds a **minor** diplomacy bonus. Spend it for a lasting return, or keep it for weight in negotiations |
+| **Renown** | Triumphs; bold ventures; deeds | **Invested in National Ambitions** (S4): a completed ambition grants a lasting bonus, so renown is spent for a return | The trade-off: renown you hold adds a **minor** diplomacy bonus. Spend it for a lasting return, or keep it for weight in negotiations |
 
 **Population is the engine.** It is what buildings grow, what produces manpower and taxes, and what eats food. Today it only feeds recruits, and the crew cap mostly limits that; income ignores it. Settling a district costs manpower permanently, but as that district develops its own population produces more: expansion is an investment that pays back.
 
@@ -73,19 +73,19 @@ Rivals start the same way (same rules, pillar 3), so the city begins mostly empt
 
 ## What each system is for
 
-| System | Its job in the spine | State after v1.26 |
+| System | Its job in the spine | State after v1.38 |
 |---|---|---|
-| Ventures | The verb | **Built** |
-| Economy | The loop: scavenge → build → population → crew and taxes | **Broken:** no materials, no scavenging; population barely matters; wealth piles up |
-| Territory | What you grow; each step should cost something | **Too cheap:** skips most of the ladder |
-| Buildings | Turn materials into population and output | Built, but they aren't part of a loop (flat bonuses) |
-| Characters and council | The people who act. Loyalty measures strain; succession is the crisis | **Half built:** they lead ventures, earn traits and can desert. No agendas, no role in succession |
-| Diplomacy | A way to get what the loop needs without war | Built, but trade gives wealth nobody needs; it should swap materials and food |
-| Traits (faction) | The memory of what you did becomes identity, and unlocks options | Built, thin |
-| National Ambitions | You choose a direction, with a cost and a payoff | **Not built:** current "ambitions" are automatic milestones |
-| Government and succession | How strain is handled; what breaks at a death | Not built |
-| Collapse and civil war | The pay-off of strain | Not built |
-| Map art | Makes the loop visible: ruins, salvage, growth, strain | Placeholder |
+| Ventures | The verb | **Built**, including control ventures, Scout/Scavenge/Settle, Rebuild, Trade Run and Reinforce |
+| Economy | The loop: scavenge → build → population → crew and taxes | **Working:** materials from scavenging and Recycling Works, food drives population and manpower, hoards leak. Nothing piles up over 8 simulated years (v1.38) |
+| Territory | What you grow; each step should cost something | **Built:** the full ladder (Scout → Scavenge → Settle → control → Rebuild); settlers stay for good. Fog of war: both options playable, not yet decided |
+| Buildings | Turn materials into population and output | **In the loop:** each changes a loop number and needs materials upkeep (disrepair otherwise). Few types yet |
+| Characters and council | The people who act. Loyalty measures strain; succession is the crisis | **Mostly built:** leaders, families, personality and ruling traits, loyalty feeding claims, a named heir. No council agendas yet |
+| Diplomacy | A way to get what the loop needs without war | **Built:** Trade Runs swap wealth for materials and food; vassals, alliances, first contact and likely deals shown. More actions parked |
+| Traits (faction) | The memory of what you did becomes identity, and unlocks options | Built; the leader's nature now pulls them. Still unlock little |
+| National Ambitions | You choose a direction, with a cost and a payoff | **Not built (S4):** current "ambitions" are automatic milestones |
+| Government and succession | How strain is handled; what breaks at a death | **Half built:** Warlord succession with contested claims. Reforms and other governments are S4 |
+| Collapse and civil war | The pay-off of strain | **Built:** a failed succession splits the faction and starts a war. Some simulated games still have none (S3 target: at least one per 4 years) |
+| Map art | Makes the loop visible: ruins, salvage, growth, strain | 2.5D procedural drawing (v1.23). The agreed 3D map (option B) not started |
 
 ## Build order (replaces the steps in doc 07)
 
@@ -96,7 +96,7 @@ Rivals start the same way (same rules, pillar 3), so the city begins mostly empt
 | **S2. Pressure** (reordered 2026-09-25, built in v1.31) | Minor factions (gangs, enclaves, raider crews, one district each) seeded between the big factions, so you meet neighbours in the first months; raids that steal food and materials, driven by need or personality; raid threats shown in Problems; Trade Runs go to another faction's market (they gain the wealth, you gain goods); Rebuild shows its payoff in numbers | Defence, arms, diplomacy and raiding each get used in the first year because a neighbour makes them matter. Playtest: "I had a reason to defend / deal / raid" |
 | **S3. The arc** (built in v1.33) | Faction leader (a character) who ages and dies; family (the first dynasty); family and renown as sources of better council members; succession under a Warlord rule; council agendas and loyalty feeding claims; a failed succession splits the faction on the map | A leader's death is the most tense moment of a run. At least one split per 4 simulated years across all factions, and it can be read coming |
 | **S3b. Legacy and the UI frame** (built in v1.34) | The new screen layout (top bar hovers, alert icons, left windows, district panel, outliner) with Character and Realm windows; personality and ruling traits, spouse always present, designate heir | Every function reachable in the new layout; the heir, a rival's weak succession and why a deal is refused can be found unaided |
-| **S4. Choices** | National Ambitions screen (a shared pool, gated by your situation, pros and cons shown, one active at a time, **renown invested to start one**, a lasting bonus on completion); government reforms (Autocracy, Politburo, Oligarchy, Democracy), each changing the succession rule. Minor factions can climb too: Junkie raiders → Warlord → Autocracy | You pick a direction and can say what it costs you |
+| **S4. Choices** | National Ambitions screen (each faction's own ambitions, drawn from one data pool by its situation, pros and cons shown, one active at a time, **renown invested to start one**, a lasting bonus on completion); government reforms (Autocracy, Politburo, Oligarchy, Democracy), each changing the succession rule. Minor factions can climb too: Junkie raiders → Warlord → Autocracy | You pick a direction and can say what it costs you |
 | **S5. Blood** | Bloodlines and marriage between factions, which create pacts, claims and heirs | Marriage is worth considering as an alternative to war |
 | **S6. Wider pressure** | Aggression memory and coalitions; the off-map crisis director (vertical slice) | Runaway conquest provokes a readable response |
 | Later | Tech tree; regional map | After the playbox gate |
@@ -111,14 +111,14 @@ Rivals start the same way (same rules, pillar 3), so the city begins mostly empt
 5. **No dead ends.** Every resource needs a source that doesn't cost that same resource, and every "can't" must say what's missing and where to get it. (Added after v1.27: Expedition cost materials and was also the main source of materials, so a player who ran out was stuck for good.)
 
 ## Parked (not cut, but not until their stage)
-Bloodlines and marriage (S5). Tech tree (later). **Portraits that evolve with the leader and the faction** (user idea, 2026-09-25): portraits age with the character, and their look follows the faction's era and government. A Junkie raider (vest, messy hair, mean look) decades later as an Autocrat wears an open white shirt, a gold chain and a sharp street-gang cut: cleaner, still a raider. For all factions. Belongs with S3 (ageing leaders) and S4 (governments); portraits are already layered procedural drawing, so this is a set of extra layers keyed to age and government, not a new system. More building types, beyond those S1 needs. More diplomacy actions. Automatic milestone ambitions (to be replaced by chosen ones in S3). Map art polish (after S1).
+Bloodlines and marriage (S5). Tech tree (later). **Portraits that evolve with the leader and the faction** (user idea, 2026-09-25): portraits age with the character, and their look follows the faction's era and government. A Junkie raider (vest, messy hair, mean look) decades later as an Autocrat wears an open white shirt, a gold chain and a sharp street-gang cut: cleaner, still a raider. For all factions. Belongs with S3 (ageing leaders) and S4 (governments); portraits are already layered procedural drawing, so this is a set of extra layers keyed to age and government, not a new system. More building types, beyond those S1 needs. More diplomacy actions. Automatic milestone ambitions (to be replaced by chosen ones in S4). Map art polish (after S1).
 
 ## Decided (2026-09-25)
 - **Materials is a new resource**: the build input, from scavenging.
 - **Manpower** replaces "crew" as the resource name. Settlers are **gone for good**, but a developing district's population produces new manpower, so expansion pays back.
 - **Map art: option B** (real 3D generated in code), after S1a.
 - **Opening: one district per faction**, with control ventures at home before expansion.
-- **Renown is a currency:** invested in National Ambitions for lasting bonuses; unspent renown gives a minor diplomacy bonus. Its current effects (crew limit, respect) are to be reviewed in S3.
+- **Renown is a currency:** invested in National Ambitions for lasting bonuses; unspent renown gives a minor diplomacy bonus. Its current effects (crew limit, respect) are to be reviewed in S4.
 
 ## Open questions
 - **Fog of war: how far it reaches.** To explore during S1b. Options:

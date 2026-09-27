@@ -30,7 +30,7 @@ Structural references come from `06-paradox-reference-notes.md` (CK2/CK3/HOI4/EU
 4. **Four outcome tiers** for ventures: Triumph, Success, Setback, Disaster.
 5. **Incentives not to go to war** are a design goal.
 6. **A tech tree** (longer term), which gives players and AI a reason to gather resources and advance.
-7. **National Ambitions**, inspired by HOI4 national focuses, **as a shared pool gated by conditions, not per-faction trees.** This amends the not-doing list (see the decision log).
+7. **National Ambitions**, inspired by HOI4 national focuses, **each faction's own, drawn from one data pool by its situation, not per-faction trees.** This amends the not-doing list (see the decision log).
 
 ---
 
@@ -194,8 +194,8 @@ The playbox stays at city level. Off-map dilemmas and regional ventures reuse th
 - **Milestones:** the current automatic ambitions (achievement-style, pay renown). Kept.
 - **National Ambitions (new, inspired by HOI4 focuses):**
   - The player and each AI faction **pursue one at a time**. Each takes months, costs resources, and gives a concrete national effect: a building bonus, a unit of culture shift, a new venture or decision, a claim, a diplomatic effect.
-  - They come from **one shared pool** of about 30, defined in data, **not per-faction trees**.
-  - Each is **available only when your state qualifies** (traits, government, tech, situation). Some are **mutually exclusive**. What you can pursue emerges from how you've played, so there's no fixed optimal branch to memorise.
+  - **Each faction has its own ambitions**, but they aren't authored per faction: they are drawn from **one pool** of about 30, defined in data once, **not per-faction trees**.
+  - Each is **available only when your state qualifies** (traits, government, tech, situation). Some are **mutually exclusive**. What you can pursue emerges from how you've played, so two factions see different lists and there's no fixed optimal branch to memorise.
   - The **AI chooses by weighted scoring**, and its current pick is shown ("The Iron Wardens pursue: Militarise the Docks"), keeping pillar 3's readability.
   - Some unlock or enable **government reform decisions** (3.1), connecting ambitions to the government paths.
 

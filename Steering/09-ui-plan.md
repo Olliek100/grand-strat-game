@@ -81,7 +81,7 @@ The CK-style character window. Opens for your leader from the portrait, and for 
 - **Tab Subjects:** your vassals and patrons (the CK2 "Vassals" tab, reduced to a short list, as agreed).
 
 ### 5. Ambitions (F5), built in S4
-One shared pool, not a tree (see 03-not-doing-list). Cards grouped by category; each shows renown cost, duration, requirements (ticked), effects, and any risk in red. One active at a time with a progress bar. Start button. (HOI4 focus popup layout, without the tree.) Today's automatic milestone list is retired or folded in.
+Your faction's ambitions: the ones from the data pool your situation qualifies for, not a tree (see 03-not-doing-list). Cards grouped by category; each shows renown cost, duration, requirements (ticked), effects, and any risk in red. One active at a time with a progress bar. Start button. (HOI4 focus popup layout, without the tree.) Today's automatic milestone list is retired or folded in.
 
 ### 6. Economy (F6)
 Where each resource comes from and goes, per day, as a table; buildings list; hoard and spoilage warnings; faction traits with progress. Replaces the Faction tab's Economy and Traits sections. The top-bar hovers are the short version of this window.
