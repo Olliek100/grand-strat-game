@@ -1,0 +1,101 @@
+{
+	"gang": {
+		"label": "Gang",
+		"description": "A crew held together by whoever is hardest. No rules, no heirs.",
+		"succession": "The strongest takes over; nobody can be named heir. Splits are 30% likelier than under a Warlord.",
+		"heir_rule": "strongest",
+		"in_power": "Splits 30% likelier. The only reform on offer: become a Warlord crew.",
+		"effects": {"split_chance_mult": 1.3},
+		"ai_goal": "expand"
+	},
+	"warlord": {
+		"label": "Warlord",
+		"description": "A strong leader and a loyal crew. The family comes first, if it can hold on.",
+		"succession": "The named heir, else the eldest child, the spouse, then family; with no family, the strongest on the council. Disloyal or Ambitious councillors may contest it.",
+		"heir_rule": "blood",
+		"in_power": "No bonuses or penalties: the baseline.",
+		"effects": {},
+		"ai_goal": "expand",
+		"reform": {
+			"label": "Become a Warlord crew",
+			"description": "Put a real leader over the gang: an heir, a council, rules that outlive a knife fight.",
+			"requires": [[{"type": "districts_held", "amount": 4}, {"type": "ambitions_done", "amount": 1}]],
+			"cost": {"renown": 10},
+			"backers": ["steadfast", "brave"], "opposers": ["ambitious"]
+		}
+	},
+	"autocracy": {
+		"label": "Autocracy",
+		"description": "One leader, one line. Orders are obeyed, and the heir is certain, until they aren't.",
+		"succession": "The named heir, with a strong claim (+25). Only councillors under 30 loyalty contest it, so splits are rarer, but a split takes 45-60% of the land.",
+		"heir_rule": "blood",
+		"in_power": "Command ventures +10%; council wages -25%; treaties 10% less likely to be accepted.",
+		"contest_loyalty": 30,
+		"split_share": [0.45, 0.6],
+		"effects": {"heir_claim": 25, "council_wage_mult": 0.75, "diplomacy_mult": 0.9},
+		"skill_odds": {"command": 1.1},
+		"ai_goal": "conquer",
+		"reform": {
+			"label": "Crown a Strongman",
+			"description": "The leader becomes the law. The council serves; it doesn't advise.",
+			"requires": [[{"type": "ambition_done", "ambition": "strongmans_crown"}, {"type": "districts_held", "amount": 10}]],
+			"cost": {"wealth": 40, "renown": 20},
+			"backers": ["ambitious", "cruel", "brave"], "opposers": ["kind", "generous"]
+		}
+	},
+	"politburo": {
+		"label": "Politburo",
+		"description": "The Party runs everything, for everyone. Dissent is dealt with quietly.",
+		"succession": "The council elects its strongest, most loyal member. Contesters are purged (expelled, the council shaken) instead of splitting the land.",
+		"heir_rule": "council_elects",
+		"in_power": "Grievance falls 0.03 a day in all your districts; wealth income x0.9. The council votes on reforms.",
+		"splits": "purge",
+		"votes": true,
+		"effects": {"owned_daily_grievance": -0.03, "wealth_income_mult": 0.9},
+		"ai_goal": "stabilize",
+		"reform": {
+			"label": "Form the Party",
+			"description": "Pool everything, share it out, and let the council decide together.",
+			"requires": [[{"type": "trait", "trait": "Socialist"}, {"type": "ambition_done", "ambition": "welfare_for_all"}]],
+			"cost": {"wealth": 30},
+			"backers": ["kind", "generous"], "opposers": ["greedy", "ambitious"]
+		}
+	},
+	"oligarchy": {
+		"label": "Merchant Oligarchy",
+		"description": "The traders run the crew like a business. Everything has a price, including loyalty.",
+		"succession": "The best Stewardship councillor takes over. At a contested succession the treasury buys off rivals: each 50 wealth (up to half of it) cuts the split chance by a quarter. A poor oligarchy splits.",
+		"heir_rule": "best_steward",
+		"in_power": "Trade income +20%; raids -10%. The council votes on reforms.",
+		"bribes": true,
+		"votes": true,
+		"effects": {"trade_income_mult": 1.2},
+		"venture_odds": {"raid": 0.9},
+		"ai_goal": "buy",
+		"reform": {
+			"label": "Charter the Guilds",
+			"description": "Give the traders the seats and the say.",
+			"requires": [[{"type": "trait", "trait": "Merchant"}, {"type": "ambition_done", "ambition": "charter_the_guilds"}]],
+			"cost": {"wealth": 60},
+			"backers": ["greedy"], "opposers": ["kind", "brave"]
+		}
+	},
+	"democracy": {
+		"label": "Democracy",
+		"description": "The people choose. It's slow, it argues, and it rarely breaks.",
+		"succession": "An election among the council (skill and loyalty, with some chance), after a 30-day caretaker period (ventures -10%). Splits are half as likely.",
+		"heir_rule": "election",
+		"in_power": "Everyone thinks 10 better of you; splits half as likely; ambitions take 50% longer and reforms cost double. The council votes on reforms.",
+		"caretaker_days": 30,
+		"votes": true,
+		"effects": {"split_chance_mult": 0.5, "ambition_days_mult": 1.5, "reform_cost_mult": 2.0, "all_opinion": 10},
+		"ai_goal": "stabilize",
+		"reform": {
+			"label": "Hold Elections",
+			"description": "Only when a leader has just died: let the people choose the next one, and every one after.",
+			"requires": [[{"type": "recent_succession", "days": 30}, {"type": "grievance_below", "amount": 30}, {"type": "at_peace"}, {"type": "treaties", "amount": 3}]],
+			"cost": {"wealth": 30},
+			"backers": ["kind", "generous", "steadfast"], "opposers": ["ambitious", "cruel"]
+		}
+	}
+}

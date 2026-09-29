@@ -2,7 +2,7 @@ extends "res://main.gd"
 
 # Screenshots of named scenarios, for checking the UI by eye.
 #   godot --path game res://tools/render_shot.tscn -- <out_dir> [scenario ...]
-# Scenarios: opening, district, character, council, realm, diplomacy, economy, menu, event
+# Scenarios: opening, district, character, council, realm, government, diplomacy, ambitions, deeds, economy, menu, event
 # A scenario name followed by @days (e.g. character@700) plays that many days with the AI first.
 
 var frame = 0
@@ -65,8 +65,16 @@ func _setup(scenario: String):
 					break
 		"economy":
 			_open_window("economy", "economy")
+		"ambitions":
+			_open_window("ambitions", "ambitions")
+		"deeds":
+			_open_window("ambitions", "deeds")
+		"government":
+			_open_window("realm", "government")
 		"menu":
 			_toggle_game_menu()
 		"event":
 			_on_major_event("First contact: a test", "A faction now borders you.", city.factions.keys()[1])
+	# Hold the clock, so nothing new (a first contact opening Diplomacy) happens before the capture
+	_set_paused(true)
 	_refresh()

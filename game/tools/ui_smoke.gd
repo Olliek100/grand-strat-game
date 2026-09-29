@@ -50,5 +50,22 @@ func _process(delta):
 	for mode in ["grievance", "fog", "political"]:
 		_set_map_mode(mode)
 	_deselect()
+	# Standing tasks: each seat's task menu, then a pick on the map, then assigning and stopping from the planner
+	_open_window("council", "seats")
+	for post in seat_rows:
+		var menu: MenuButton = seat_rows[post]["task"]
+		_fill_task_menu(menu, post)
+		var popup = menu.get_popup()
+		for i in popup.item_count:
+			if not popup.is_item_disabled(i):
+				_on_task_chosen(post, popup.get_item_id(i))
+				if not map_view.pick_labels.is_empty():
+					_on_district_clicked(city.districts[map_view.pick_labels.keys()[0]])
+					_on_launch_pressed()
+					_refresh()
+					_on_launch_pressed()
+				break
+	_cancel_task_pick()
+	_refresh()
 	print("UI SMOKE OK")
 	get_tree().quit()

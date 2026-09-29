@@ -20,10 +20,11 @@
 	"pact": {
 		"label": "Propose non-aggression pact",
 		"proposal": "a non-aggression pact",
-		"description": "Neither side can raid, agitate against or declare war on the other while it holds.",
+		"description": "Neither side can raid, agitate against or declare war on the other while it holds. You can pay in wealth, food or materials.",
 		"kind": "treaty",
 		"treaty": "pact",
 		"cost": {"wealth": 10},
+		"cost_options": [{"wealth": 10}, {"supplies": 15}, {"materials": 12}],
 		"days": 8,
 		"base": 0.5
 	},
@@ -57,5 +58,26 @@
 		"days": 30,
 		"base": 0.7,
 		"min_opinion": 50
+	},
+	"tribute": {
+		"label": "Pay tribute",
+		"description": "Hand over food or materials (whichever you can better spare) and they leave you alone for 60 days. They always take it. Only for a faction that raided you or demanded tribute in the last 90 days; the price grows with their strength.",
+		"kind": "tribute",
+		"cost": {},
+		"tribute_base": 10,
+		"tribute_per_strength": 0.2,
+		"days": 3,
+		"spare_days": 60
+	},
+	"demand": {
+		"label": "Demand tribute",
+		"proposal": "that you pay tribute or be raided",
+		"description": "Tell a neighbour to pay you food or materials. If they pay, you promise not to raid them for 60 days. If they refuse, your raids on them get +20% odds for 60 days. Weaker factions give in more easily.",
+		"kind": "demand",
+		"cost": {},
+		"days": 3,
+		"base": 0.5,
+		"spare_days": 60,
+		"refused_days": 60
 	}
 }

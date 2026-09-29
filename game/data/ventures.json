@@ -1,6 +1,7 @@
 {
 	"secure_food": {
 		"label": "Secure Food",
+		"task": true, "task_label": "Securing food in",
 		"skill": "stewardship", "danger": 0.12, "crew_range": [2, 5], "funding_cost": 6,
 		"on_triumph": "a lasting store: a bigger food source, extra food", "on_disaster": "a fight over the stores: crew lost",
 		"triumph_effects": [{"op": "food_source", "amount": 0.08}, {"op": "gain", "resource": "supplies", "amount": 6}],
@@ -30,6 +31,7 @@
 	},
 	"safeguard": {
 		"label": "Safeguard the Shelter",
+		"task": true, "task_label": "Safeguarding",
 		"skill": "command", "danger": 0.2, "crew_range": [2, 6], "funding_cost": 6,
 		"on_triumph": "the district feels safe: more control, calmer", "on_disaster": "a collapse or a clash: crew lost",
 		"triumph_effects": [{"op": "influence", "who": "self", "amount": 6}, {"op": "grievance", "amount": -5}],
@@ -59,6 +61,7 @@
 	},
 	"gather_weapons": {
 		"label": "Gather Weapons",
+		"task": true, "task_label": "Gathering weapons in",
 		"skill": "cunning", "danger": 0.25, "crew_range": [2, 6], "funding_cost": 6,
 		"on_triumph": "an armoury: double the arms", "on_disaster": "an ambush over the cache: crew lost",
 		"triumph_effects": [{"op": "gain", "resource": "arms", "amount": 4}],
@@ -87,6 +90,7 @@
 	},
 	"scavenge": {
 		"label": "Scavenge",
+		"task": true, "task_label": "Scavenging",
 		"skill": "stewardship", "danger": 0.15, "crew_range": [2, 5], "funding_cost": 5,
 		"on_triumph": "a sealed store room: extra materials", "on_disaster": "a collapse: crew lost",
 		"triumph_effects": [{"op": "gain", "resource": "materials", "amount": 6}],
@@ -106,7 +110,7 @@
 		"on_success": "materials (more in heavier ruins), ruins -4%, +3 influence",
 		"on_failure": "nothing worth carrying",
 		"success_effects": [
-			{"op": "gain", "resource": "materials", "amount": 3, "per_ruin": 12},
+			{"op": "gain", "resource": "materials", "amount": 3, "per_ruin": 12, "mult_effect": "scavenge_yield_mult"},
 			{"op": "ruin", "amount": -0.04},
 			{"op": "influence", "who": "self", "amount": 3}
 		],
@@ -157,10 +161,11 @@
 		"hostile": false,
 		"ai_goal": "expand",
 		"odds_factors": ["claimant_present"],
-		"on_success": "+30 influence; the crew settle there for good",
+		"on_success": "+30 influence; the crew settle there for good; newcomers unsettle the locals (grievance +15)",
 		"on_failure": "-5 influence, 1-2 crew lost; the rest come home",
 		"success_effects": [
-			{"op": "influence", "who": "self", "amount": 30}
+			{"op": "influence", "who": "self", "amount": 30},
+			{"op": "grievance", "amount": 15}
 		],
 		"failure_effects": [
 			{"op": "crew_loss", "min": 1, "max": 2},
@@ -171,6 +176,7 @@
 	},
 	"rebuild": {
 		"label": "Rebuild",
+		"task": true, "task_label": "Rebuilding",
 		"skill": "stewardship", "danger": 0.08, "crew_range": [2, 6], "funding_cost": 8,
 		"on_triumph": "a whole block brought back", "on_disaster": "a collapse on the work site",
 		"triumph_effects": [{"op": "development", "amount": 0.04}],
@@ -199,6 +205,7 @@
 	},
 	"reinforce": {
 		"label": "Reinforce",
+		"task": true, "task_label": "Guarding",
 		"skill": "command", "danger": 0.05, "crew_range": [2, 12], "funding_cost": 5,
 		"on_triumph": "the defenders dig in: +5 control", "on_disaster": "a fight among the guards",
 		"triumph_effects": [{"op": "influence", "who": "self", "amount": 3}],
@@ -252,10 +259,10 @@
 		"label": "Raid",
 		"skill": "command", "danger": 0.3, "crew_range": [3, 8], "funding_cost": 6,
 		"on_triumph": "a rout: extra loot", "on_disaster": "an ambush: heavy crew losses",
-		"triumph_effects": [{"op": "steal", "resource": "supplies", "amount": 10, "bonus": 2}],
+		"triumph_effects": [{"op": "steal", "resource": "supplies", "amount": 10, "bonus": 2, "worth": true}],
 		"disaster_effects": [{"op": "crew_share_loss", "share": 0.4}],
 		"triumph_log": "a rout: seized {supplies} more food", "disaster_log": "walked into an ambush",
-		"description": "Loot a district held by another faction on your border: take their food and materials. Weakens them but doesn't take land, and they won't forget it.",
+		"description": "Loot a district held by another faction on your border: take their food and materials. Weakens them but doesn't take land, and they won't forget it. Afterwards nobody can raid that district for 30 days (45 if the raid failed, 60 after a disaster).",
 		"base_success": 0.55,
 		"crew": 4,
 		"cost": {"supplies": 3, "arms": 2},
@@ -263,14 +270,15 @@
 		"feeds_trait": "Militaristic",
 		"target": "enemy_border",
 		"hostile": true,
+		"raid_cooldown": {"triumph": 30, "success": 30, "setback": 45, "disaster": 60},
 		"ai_goal": "harass",
-		"odds_factors": ["target_secured", "defender_traits", "defender_on_site"],
-		"on_success": "steal food and materials, damage its development, grievance +10, 30% chance to wreck a building",
+		"odds_factors": ["target_secured", "defender_traits", "defender_on_site", "emboldened"],
+		"on_success": "steal food and materials (more from a built-up district), damage its development, grievance +10, 30% chance to wreck a building",
 		"on_failure": "lose 2 crew",
 		"success_effects": [
-			{"op": "steal", "resource": "supplies", "amount": 12, "bonus": 4},
-			{"op": "steal", "resource": "materials", "amount": 8, "bonus": 2},
-			{"op": "steal", "resource": "wealth", "amount": 6, "bonus": 1},
+			{"op": "steal", "resource": "supplies", "amount": 12, "worth": true},
+			{"op": "steal", "resource": "materials", "amount": 8, "worth": true},
+			{"op": "steal", "resource": "wealth", "amount": 6, "worth": true},
 			{"op": "development", "amount": -0.05},
 			{"op": "ruin", "amount": 0.03},
 			{"op": "grievance", "amount": 10, "scaled": true},
@@ -284,6 +292,29 @@
 		],
 		"success_log": "seized {supplies} food and {materials} materials, and wrecked some of the district",
 		"failure_log": "repelled by the defenders"
+	},
+	"threaten": {
+		"label": "Threaten",
+		"skill": "command", "danger": 0.1, "crew_range": [2, 5], "funding_cost": 5,
+		"on_triumph": "they back right off: no raids from them for 90 days", "on_disaster": "they call your bluff: their raids on you get +20% odds for 30 days",
+		"triumph_effects": [{"op": "spare", "days": 90}],
+		"disaster_effects": [{"op": "embolden", "days": 30}],
+		"triumph_log": "they backed right off", "disaster_log": "they called your bluff",
+		"description": "Show your strength at the edge of a raider's land and warn them off. Works on a faction that raided you or demanded tribute in the last 90 days. The stronger and better armed you are next to them, the better it goes.",
+		"base_success": 0.5,
+		"crew": 3,
+		"cost": {"supplies": 2},
+		"days": 4,
+		"feeds_trait": "Militaristic",
+		"target": "raider_border",
+		"hostile": false,
+		"ai_goal": "deter",
+		"odds_factors": ["strength_ratio", "your_arms"],
+		"on_success": "no raids from them for 45 days",
+		"on_failure": "they resent it: their opinion of you -10",
+		"success_effects": [{"op": "spare", "days": 45}],
+		"failure_effects": [{"op": "opinion", "amount": -10, "modifier": "threatened"}],
+		"success_log": "they agreed to keep away", "failure_log": "they laughed it off"
 	},
 	"assault": {
 		"label": "Assault",
@@ -380,6 +411,7 @@
 	},
 	"relief": {
 		"label": "Relief",
+		"task": true, "task_label": "Bringing relief to",
 		"skill": "stewardship", "danger": 0.03, "crew_range": [1, 4], "funding_cost": 10,
 		"on_triumph": "hope returns: grievance -35, population grows", "on_disaster": "an aid riot: grievance +5",
 		"triumph_effects": [{"op": "grievance", "amount": -10}, {"op": "population", "mult": 1.02}],

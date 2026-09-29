@@ -43,37 +43,37 @@
 			"traits": {"Socialist": 35}
 		},
 		{
-			"id": "rust_dogs", "name": "Rust Dogs", "color": "#c0692a", "minor": true, "personality": "raider",
+			"id": "rust_dogs", "name": "Rust Dogs", "color": "#c0692a", "minor": true,
 			"near": "player", "blurb": "Junkies turned raiders. They take what they can't make.",
 			"manpower": 8, "supplies": 12, "materials": 6, "arms": 10, "wealth": 5,
 			"traits": {"Militaristic": 45}
 		},
 		{
-			"id": "st_brigids", "name": "St. Brigid's Ward", "color": "#d8ccb0", "minor": true, "personality": "hermit",
+			"id": "st_brigids", "name": "St. Brigid's Ward", "color": "#d8ccb0", "minor": true,
 			"near": "player", "blurb": "Nurses and patients who never left the hospital. They trade medicine for protection.",
 			"manpower": 7, "supplies": 20, "materials": 10, "arms": 2, "wealth": 15,
 			"traits": {"Socialist": 30}
 		},
 		{
-			"id": "tunnel_rats", "name": "Tunnel Rats", "color": "#6f8fa3", "minor": true, "personality": "trader",
+			"id": "tunnel_rats", "name": "Tunnel Rats", "color": "#6f8fa3", "minor": true,
 			"near": "guild", "blurb": "Scavengers who live under the city and sell what they dig up.",
 			"manpower": 7, "supplies": 15, "materials": 20, "arms": 3, "wealth": 20,
 			"traits": {"Merchant": 30}
 		},
 		{
-			"id": "pale_riders", "name": "Pale Riders", "color": "#a58fcf", "minor": true, "personality": "raider",
+			"id": "pale_riders", "name": "Pale Riders", "color": "#a58fcf", "minor": true,
 			"near": "rival", "blurb": "Motorbike raiders who hit and run.",
 			"manpower": 8, "supplies": 12, "materials": 6, "arms": 10, "wealth": 5,
 			"traits": {"Militaristic": 45}
 		},
 		{
-			"id": "ashgrove_kin", "name": "Ashgrove Kin", "color": "#98a64a", "minor": true, "personality": "hermit",
+			"id": "ashgrove_kin", "name": "Ashgrove Kin", "color": "#98a64a", "minor": true,
 			"near": "commune", "blurb": "Families holed up in the allotments. Wary, but they feed themselves.",
 			"manpower": 7, "supplies": 25, "materials": 8, "arms": 3, "wealth": 8,
-			"traits": {}
+			"traits": {"Socialist": 30}
 		},
 		{
-			"id": "bishops_men", "name": "Bishop's Men", "color": "#8e3f78", "minor": true, "personality": "raider",
+			"id": "bishops_men", "name": "Bishop's Men", "color": "#8e3f78", "minor": true,
 			"near": "guild", "blurb": "A preacher's armed flock. They take tithes, by force if need be.",
 			"manpower": 9, "supplies": 15, "materials": 8, "arms": 8, "wealth": 10,
 			"traits": {"Militaristic": 35}

@@ -15,6 +15,8 @@ var development: float = 0.3
 var food_yield: float = 0.0
 # Danger 0-0.6: ferals, traps, raiders. Hurts odds and raises disaster chances; scouting reveals it
 var hazard: float = 0.15
+# No raids here before this day: raiders pull back after a raid, longer after a failed one
+var raid_safe_until: int = 0
 
 # Map shape
 var polygon: PackedVector2Array
@@ -102,7 +104,7 @@ func to_dict() -> Dictionary:
 	return {
 		"influence": influence.duplicate(), "population": population, "grievance": grievance,
 		"ruin_level": ruin_level, "development": development, "unrest_warned": unrest_warned,
-		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard,
+		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard, "raid_safe_until": raid_safe_until,
 	}
 
 func load_dict(data: Dictionary):
@@ -115,3 +117,4 @@ func load_dict(data: Dictionary):
 	buildings.assign(data["buildings"])
 	food_yield = data["food_yield"]
 	hazard = data["hazard"]
+	raid_safe_until = data["raid_safe_until"]

@@ -13,7 +13,7 @@ func _init():
 	_test_save_file()
 	_test_ai_diplomacy()
 	_test_treaties()
-	_test_memories_and_ambitions()
+	_test_memories_and_deeds()
 	_test_leaders_and_tiers()
 	_test_no_stacking()
 	_test_buildings()
@@ -23,6 +23,11 @@ func _init():
 	_test_captains_kept()
 	_test_expansion()
 	_test_pressure()
+	_test_raid_cooldown()
+	_test_raiders_and_deterrence()
+	_test_ambitions()
+	_test_government()
+	_test_tasks()
 	_test_minor_patrons()
 	_test_defence()
 	_test_claimed_land_is_off_limits()
@@ -112,8 +117,8 @@ func _test_save_file():
 	_check("load_game restores the same state", loaded != null and _snapshot(loaded) == _snapshot(c))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
-# Opinion memories fade; ambitions complete and pay renown; treaties can be renewed near the end
-func _test_memories_and_ambitions():
+# Opinion memories fade; deeds complete and pay renown; treaties can be renewed near the end
+func _test_memories_and_deeds():
 	var c = _new_city()
 	var me = c.player_id
 	var before = c.opinion_of("guild", me)
@@ -128,9 +133,12 @@ func _test_memories_and_ambitions():
 	var cap_before = c2.crew_cap(me)
 	Diplomacy.form_treaty(c2, "trade", me, "guild")
 	c2.advance_day()
-	_check("an ambition completes and pays renown", "handshake" in p.ambitions_done and p.renown > renown_before)
-	p.renown = 100.0
-	_check("renown raises the crew limit", c2.crew_cap(me) > cap_before)
+	_check("a deed completes and pays renown", "handshake" in p.deeds_done and p.renown > renown_before)
+	p.reputation = 100.0
+	_check("reputation raises the crew limit", c2.crew_cap(me) > cap_before)
+	var rep_before = p.reputation
+	p.pay({"renown": p.renown})
+	_check("spending renown leaves reputation and the crew limit alone", p.reputation == rep_before and c2.crew_cap(me) > cap_before)
 	Diplomacy.form_treaty(c2, "pact", me, "rival")
 	var r = c2.relation(me, "rival")
 	var early = Diplomacy.check_action(c2, "pact", me, "rival")
@@ -301,12 +309,15 @@ func _test_council():
 	var copy = loaded.character_by_id(best.id)
 	_check("seats, traits and loyalty survive a save", copy.post == "quartermaster" and copy.has_trait("veteran") and absf(copy.loyalty() - best.loyalty()) < 0.01)
 	# A deeply disloyal captain eventually deserts
-	var rebel = c.characters_of(me).filter(func(x): return x.post == "")[0]
+	var rebel = c.characters_of(me).filter(func(x): return x.post == "" and not x.family)[0]
 	rebel.change_loyalty(-30.0, "dismissed")
 	rebel.change_loyalty(-25.0, "passed_over")
 	rebel.traits.append("ambitious")
 	var gone = false
 	for i in 400:
+		# Keep the grudge fresh, so this tests the desertion rule rather than how fast memories fade
+		rebel.change_loyalty(-30.0, "dismissed")
+		rebel.change_loyalty(-25.0, "passed_over")
 		c.advance_day()
 		if c.character_by_id(rebel.id) == null or c.character_by_id(rebel.id).faction_id != me:
 			gone = true
@@ -322,7 +333,7 @@ func _test_opening():
 	_check("the shelter starts claimed but not secured", home.get_control_status() == "claimed")
 	# Hunger never locks you out of fixing it
 	p.supplies = 0.0
-	var err = c.check_launch(me, "secure_food", home)
+	var err = c.check_launch(me, "secure_food", home, -2, -1, 0, true)
 	_check("Secure Food can be launched with no food", err == "", err)
 	# Food drives manpower, and owned neighbours share a little of theirs
 	var before_food = c.district_food(home)
@@ -385,14 +396,14 @@ func _test_no_dead_ends():
 	_check("a shortfall names what's missing and where to get it", err.contains("materials") and err.contains("have 2") and err.contains("Scavenge"), err)
 	p.materials = 0.0
 	home.ruin_level = 0.35
-	err = c.check_launch(me, "scavenge", home)
+	err = c.check_launch(me, "scavenge", home, -2, -1, 0, true)
 	_check("with no materials you can still scavenge at home", err == "", err)
 	_check("you can scavenge unclaimed ruins on your border", c.check_launch(me, "scavenge", target) == "" or target.ruin_level < 0.1)
 	home.ruin_level = 0.05
-	_check("stripped ruins can't be scavenged", c.check_launch(me, "scavenge", home).begins_with("Nothing left"))
+	_check("stripped ruins can't be scavenged", c.check_launch(me, "scavenge", home, -2, -1, 0, true).begins_with("Nothing left"))
 	p.wealth = 0.0
 	p.materials = 50.0
-	err = c.check_launch(me, "gather_weapons", home, -2, -1, 1)
+	err = c.check_launch(me, "gather_weapons", home, -2, -1, 1, true)
 	_check("unaffordable extra funding says so", err.contains("wealth") and err.contains("less extra funding"), err)
 
 # Lost captains get replaced, losses are recorded, and "nobody free" says who's away
@@ -413,7 +424,7 @@ func _test_captains_kept():
 	var home: District = c.districts[c.factions[me].home_id]
 	for ch in c.characters_of(me):
 		ch.wounded_until = c.day + 20
-	var err = c.check_launch(me, "secure_food", home)
+	var err = c.check_launch(me, "secure_food", home, -2, -1, 0, true)
 	_check("no free captain says who is away and for how long", err.begins_with("No captain is free") and err.contains("wounded for"), err)
 	var loaded = CityMap.new(bytes_to_var(var_to_bytes(c.to_save())))
 	_check("the departed survive a save", loaded.departed.size() == c.departed.size())
@@ -489,7 +500,7 @@ func _test_pressure():
 			two_steps = true
 	_check("the Rust Dogs start two districts from the player", two_steps)
 	# Raiders value raiding far more than hermits do
-	_check("raiders are keen on raids", dogs.ai._temperament("harass", dogs) > c.factions["st_brigids"].ai._temperament("harass", c.factions["st_brigids"]) * 5.0)
+	_check("raiders are keen on raids", FactionAI.temperament("harass", dogs) > FactionAI.temperament("harass", c.factions["st_brigids"]) * 5.0)
 	# Trade Runs go to someone else's market, who keeps the wealth
 	var me = c.player_id
 	var p: Faction = c.factions[me]
@@ -512,6 +523,231 @@ func _test_pressure():
 	var raid_ops = GameData.venture("raid")["success_effects"].map(func(e): return e.get("resource", ""))
 	_check("raids steal materials as well as food", "materials" in raid_ops and "supplies" in raid_ops)
 
+# After a raid, nobody can raid that district again for a while (longer if the raid failed)
+func _test_raid_cooldown():
+	var c = CityMap.new()
+	var me = c.player_id
+	var dogs: Faction = c.factions["rust_dogs"]
+	var home: District = c.districts[c.factions[me].home_id]
+	var between: District = null
+	for n_id in home.neighbor_ids:
+		if dogs.home_id in c.districts[n_id].neighbor_ids:
+			between = c.districts[n_id]
+	between.influence.clear()
+	between.add_influence(me, 60.0)
+	dogs.arms = 10.0
+	dogs.supplies = 50.0
+	dogs.manpower = 20.0
+	var err = c.check_launch("rust_dogs", "raid", between)
+	_check("raiders can raid a bordering district", err == "", err)
+	c.launch_venture("rust_dogs", "raid", between, -2, -1, 0)
+	for i in 30:
+		if between.raid_safe_until > 0:
+			break
+		c.advance_day()
+	var cooldown: Dictionary = GameData.venture("raid")["raid_cooldown"]
+	var left = between.raid_safe_until - c.day
+	_check("a raid starts a cooldown of 30-60 days", left >= cooldown["success"] - 1 and left <= cooldown["disaster"], str(left))
+	_check("a raided district can't be raided again yet", c.check_launch("rust_dogs", "raid", between).begins_with("Raided recently"))
+	_check("the cooldown is saved", int(between.to_dict()["raid_safe_until"]) == between.raid_safe_until)
+
+# Raids are worth what the district is worth; raiders can be paid off, refused or threatened
+func _test_raiders_and_deterrence():
+	var c = CityMap.new()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	var dogs: Faction = c.factions["rust_dogs"]
+	var home: District = c.districts[p.home_id]
+	var between: District = null
+	for n_id in home.neighbor_ids:
+		if dogs.home_id in c.districts[n_id].neighbor_ids:
+			between = c.districts[n_id]
+	between.influence.clear()
+	between.add_influence(me, 60.0)
+	between.development = 0.25
+	between.buildings.clear()
+	_check("a fresh claim is worth little to raid", c.raid_worth(between) < 0.8, str(c.raid_worth(between)))
+	_check("a rebuilt home is worth more to raid", c.raid_worth(home) > c.raid_worth(between))
+	# Loot scales with worth
+	p.supplies = 100.0
+	dogs.supplies = 0.0
+	VentureSystem.apply_effects(GameData.venture("raid")["success_effects"], dogs, me, between, c)
+	_check("raiding a fresh claim takes less than the full 12 food", dogs.supplies < 12.0 and dogs.supplies > 0.0, str(dogs.supplies))
+	# Tribute: only once they've menaced you, then they must keep away
+	_check("no tribute to a faction that never raided you", Diplomacy.check_action(c, "tribute", me, "rust_dogs") != "")
+	var r = c.relation(me, "rust_dogs")
+	r.last_raid["rust_dogs"] = maxi(1, c.day)
+	p.materials = 100.0
+	var err = Diplomacy.check_action(c, "tribute", me, "rust_dogs")
+	_check("tribute can be paid to a faction that raided you", err == "", err)
+	var price = Diplomacy.action_cost(c, "tribute", me, "rust_dogs")
+	_check("tribute is paid in food or materials, never wealth", not price.has("wealth") and price.size() == 1, str(price))
+	Diplomacy.start_action(c, "tribute", me, "rust_dogs")
+	for i in 5:
+		c.advance_day()
+	_check("paid tribute keeps them away", r.spare_until["rust_dogs"] > c.day)
+	dogs.arms = 10.0
+	dogs.supplies = 50.0
+	dogs.manpower = 20.0
+	_check("a faction paid off can't raid you", c.check_launch("rust_dogs", "raid", between).begins_with("You promised"))
+	# A refused demand emboldens the raider
+	Diplomacy._demand_refused(c, "rust_dogs", me)
+	var odds = VentureSystem.compute_odds("raid", dogs, between, c, me)
+	_check("a refused demand gives the raider better odds", odds["factors"].any(func(f): return f[0].begins_with("Emboldened")))
+	# Threaten: a venture against a raider on your border
+	r.spare_until["rust_dogs"] = 0
+	var dogs_land: District = c.districts[dogs.home_id]
+	p.supplies = 50.0
+	p.manpower = 20.0
+	err = c.check_launch(me, "threaten", dogs_land)
+	_check("you can threaten a raider on your border", err == "", err)
+	VentureSystem.apply_effects(GameData.venture("threaten")["success_effects"], p, "rust_dogs", dogs_land, c)
+	_check("a successful threat keeps them away", r.spare_until["rust_dogs"] > c.day + 40)
+	var saved = Relation.from_dict(r.to_dict())
+	_check("raid promises are saved", saved.spare_until["rust_dogs"] == r.spare_until["rust_dogs"] and saved.bold_until["rust_dogs"] == r.bold_until["rust_dogs"])
+	# Pacts can be paid in food or materials
+	p.wealth = 0.0
+	var pact_cost = Diplomacy.action_cost(c, "pact", me, "guild")
+	_check("a pact can be paid without wealth", not pact_cost.has("wealth") and p.can_afford(pact_cost), str(pact_cost))
+	# Pacts only between neighbours, and nobody offers one without a reason
+	var fresh = CityMap.new()
+	_check("no pact with a faction you don't border", Diplomacy.check_action(fresh, "pact", "guild", fresh.player_id).begins_with("You don't share a border"))
+	var offers = 0
+	for i in 200:
+		fresh.advance_day()
+		offers += fresh.proposals.filter(func(x): return x["action"] == "pact" and not fresh.shares_border(x["from"], fresh.player_id)).size()
+	_check("no pact offers from factions that don't border you", offers == 0, str(offers))
+
+# National Ambitions: gated by situation, paid in renown, closing rivals, lasting once done
+func _test_ambitions():
+	var c = CityMap.new()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	p.add_renown(50.0)
+	_check("a crew that isn't Militaristic can't start A Name to Fear", c.check_ambition(me, "name_to_fear").begins_with("Needs"))
+	p.traits.add_faction_trait_value("Militaristic", 60.0)
+	p.renown = 0.0
+	_check("an ambition you can't pay for says so", c.check_ambition(me, "name_to_fear").contains("renown"))
+	p.add_renown(50.0)
+	var rep = p.reputation
+	_check("a qualifying, paid-up ambition can start", c.start_ambition(me, "name_to_fear") == "")
+	_check("starting spends renown but not reputation", p.renown < 50.0 and p.reputation == rep)
+	_check("choosing it closes its rival for good", "good_neighbours" in p.ambitions_closed)
+	_check("only one ambition at a time", c.check_ambition(me, "walls_and_watches") != "")
+	var before = VentureSystem.compute_odds("raid", p, c.districts[p.home_id], c, "")["factors"].size()
+	for i in c.ambition_days(me, "name_to_fear"):
+		c.advance_day()
+	_check("an ambition completes after its time", "name_to_fear" in p.ambitions_done and p.ambition == "")
+	var factors = VentureSystem.compute_odds("raid", p, c.districts[p.home_id], c, "")["factors"]
+	_check("its bonus lasts: raids get an odds factor", factors.any(func(f): return f[0] == "A Name to Fear"), str(factors))
+	var saved = Faction.from_dict(p.to_dict())
+	_check("ambitions survive a save", "name_to_fear" in saved.ambitions_done and "good_neighbours" in saved.ambitions_closed)
+	# Welfare for All fails if you raid while it runs
+	p.traits.add_faction_trait_value("Socialist", 60.0)
+	p.add_renown(50.0)
+	var err = c.start_ambition(me, "welfare_for_all")
+	_check("Welfare for All can start", err == "", err)
+	c.fail_ambition(me, "test")
+	_check("a failed ambition ends without its bonus", p.ambition == "" and "welfare_for_all" not in p.ambitions_done)
+
+# Governments: gangs and warlords at the start, reforms with a cost and a lock, rules that change succession
+func _test_government():
+	var c = CityMap.new()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	_check("minor factions start as gangs, major ones as Warlords", c.factions["rust_dogs"].government == "gang" and p.government == "warlord")
+	var dogs: Faction = c.factions["rust_dogs"]
+	_check("a gang can only become a Warlord crew", c.reform_options("rust_dogs") == ["warlord"])
+	_check("a gang must grow and achieve something first", c.check_reform("rust_dogs", "warlord").begins_with("Needs"))
+	# Autocracy: a strongman's reform, then stricter contests
+	p.ambitions_done.append("strongmans_crown")
+	for d in c.districts.slice(0, 12):
+		d.influence.clear()
+		d.add_influence(me, 80.0)
+	p.wealth = 200.0
+	p.add_renown(50.0)
+	var grievance_before = c.districts[p.home_id].grievance
+	var err = c.take_reform(me, "autocracy")
+	_check("a qualifying faction can crown a strongman", err == "" and p.government == "autocracy", err)
+	_check("a reform unsettles your districts", c.districts[p.home_id].grievance > grievance_before)
+	_check("no second reform for two years", c.check_reform(me, "politburo").begins_with("Too soon"))
+	var saved = Faction.from_dict(p.to_dict())
+	_check("the government survives a save", saved.government == "autocracy" and saved.reform_locked_until == p.reform_locked_until)
+	# The Politburo's council votes: a majority against blocks a reform
+	p.government = "politburo"
+	p.reform_locked_until = 0
+	p.effect_cache.clear()
+	var hired = c.characters_of(me).filter(func(x): return not x.family)
+	c.appoint(hired[0].id, "war_chief")
+	c.appoint(hired[1].id, "envoy")
+	var council = c.characters_of(me).filter(func(x): return x.post != "")
+	for x in council:
+		x.traits.append("cruel")
+	p.traits.add_faction_trait_value("Socialist", 60.0)
+	var stance = c.council_stance(me, "democracy")
+	_check("councillors take sides by their natures", council.size() >= 2 and stance["against"].size() == council.size())
+	# Meet every requirement for the Oligarchy, with a council that opposes it: only the vote stands in the way
+	for x in council:
+		x.traits.append("kind")
+	p.traits.add_faction_trait_value("Merchant", 60.0)
+	p.ambitions_done.append("charter_the_guilds")
+	p.wealth = 500.0
+	var vote = c.check_reform(me, "oligarchy")
+	_check("under the Politburo a council majority against blocks a reform", vote.begins_with("The council votes it down"), vote)
+	# A purge removes the rival without splitting the land
+	var held = c.districts_held(me)
+	var rival = council[0]
+	c._purge(me, rival)
+	_check("a purge expels the rival and keeps the land", c.districts_held(me) == held and (c.character_by_id(rival.id) == null or c.character_by_id(rival.id).faction_id != me))
+
+# Standing tasks: a councillor works a district until it's done; commitment, stopping, pausing, saving
+func _test_tasks():
+	var c = CityMap.new()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	var home: District = c.districts[p.home_id]
+	p.supplies = 500.0
+	p.materials = 500.0
+	p.manpower = 40.0
+	_check("routine work on your own land isn't a one-off launch", c.check_launch(me, "scavenge", home).begins_with("Assign a councillor"))
+	_check("the AI is held to the same rule", c.check_launch("rust_dogs", "scavenge", c.districts[c.factions["rust_dogs"].home_id]).begins_with("Assign a councillor"))
+	_check("only a councillor can take a task", c.check_task(me, "scavenge", home).begins_with("Nobody sits on your council") or c.check_task(me, "scavenge", home).begins_with("No councillor"))
+	var hired = c.characters_of(me).filter(func(x): return not x.family)
+	c.appoint(hired[0].id, "quartermaster")
+	var q: Character = hired[0]
+	home.ruin_level = 0.3
+	var err = c.assign_task(me, "scavenge", home, q.id)
+	_check("a councillor can be assigned to scavenge home", err == "" and c.task_of(q) != null, err)
+	_check("a councillor on a task can't lead a one-off", c.leader_busy(q))
+	for i in 400:
+		c.advance_day()
+		if c.task_of(q) == null:
+			break
+	_check("the task ends when the ruins are stripped", c.task_of(q) == null and home.ruin_level < 0.1, "ruins %.2f" % home.ruin_level)
+	_check("a task that ends naturally frees the councillor at once", not c.leader_busy(q) or q.is_wounded(c.day))
+	# Stopping: free of cost, but the commitment holds
+	q.wounded_until = 0
+	home.development = 0.3
+	err = c.assign_task(me, "rebuild", home, q.id)
+	_check("a councillor can be assigned to rebuild", err == "", err)
+	var t = c.task_of(q)
+	c.stop_task(t)
+	for i in 20:
+		c.advance_day()
+	_check("a stopped task ends after its run", c.task_of(q) == null)
+	_check("stopping early keeps the councillor committed for two runs", q.committed_until > c.day or q.committed_until >= t.started_day + 20, "%d vs day %d" % [q.committed_until, c.day])
+	# A wounded councillor's task waits for them
+	q.committed_until = 0
+	home.development = 0.3
+	c.assign_task(me, "rebuild", home, q.id)
+	t = c.task_of(q)
+	q.wounded_until = c.day + 30
+	c.ventures = c.ventures.filter(func(v): return v.leader_id != q.id)
+	c._continue_task(t)
+	_check("a wounded councillor's task pauses instead of ending", c.task_of(q) == t and t.paused == "wounded")
+	var loaded = CityMap.new(bytes_to_var(var_to_bytes(c.to_save())))
+	_check("tasks survive a save", loaded.tasks.size() == c.tasks.size() and loaded.character_by_id(q.id).committed_until == q.committed_until)
+
 func _test_minor_patrons():
 	var c = CityMap.new()
 	var me = c.player_id
@@ -531,7 +767,7 @@ func _test_defence():
 	home.add_influence(me, 40.0)
 	_check("more control means a better defence", c.defence_total(home) < weak)
 	# Reinforce only where there's a threat
-	_check("no reinforcing where there's no threat", c.check_launch(me, "reinforce", home).begins_with("No threat"))
+	_check("no reinforcing where there's no threat", c.check_launch(me, "reinforce", home, -2, -1, 0, true).begins_with("No threat"))
 	var dogs: Faction = c.factions["rust_dogs"]
 	var between: District = null
 	for n_id in home.neighbor_ids:
@@ -539,12 +775,12 @@ func _test_defence():
 			between = c.districts[n_id]
 	between.influence.clear()
 	between.add_influence(me, 60.0)
-	_check("a district next to raiders can be reinforced", c.check_launch(me, "reinforce", between) == "", c.check_launch(me, "reinforce", between))
+	_check("a district next to raiders can be reinforced", c.check_launch(me, "reinforce", between, -2, -1, 0, true) == "", c.check_launch(me, "reinforce", between, -2, -1, 0, true))
 	dogs.arms = 20.0
 	dogs.supplies = 50.0
 	var before = VentureSystem.compute_odds("raid", dogs, between, c, me)["odds"]
 	var days_before = c.venture_days("raid", null, between)
-	c.launch_venture(me, "reinforce", between, -2, 8)
+	c.launch_venture(me, "reinforce", between, -2, 8, 0, true)
 	var after = VentureSystem.compute_odds("raid", dogs, between, c, me)
 	_check("defenders on guard cut raid odds", after["odds"] < before * 0.7, "%.2f -> %.2f" % [before, after["odds"]])
 	_check("defenders show as a named factor", after["factors"].any(func(f): return str(f[0]).ends_with("defenders on guard")))

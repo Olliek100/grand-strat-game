@@ -5,7 +5,7 @@ class_name FactionAI
 # data/ventures.json) and by the faction's own traits, then takes the best move.
 # It follows the same rules as the player, including war, and telegraphs war before declaring.
 
-const GOALS = ["expand", "harass", "conquer", "income", "subvert", "stabilize", "food", "control", "arms", "materials", "scout", "buy", "develop", "defend"]
+const GOALS = ["expand", "harass", "conquer", "income", "subvert", "stabilize", "food", "control", "arms", "materials", "scout", "buy", "develop", "defend", "deter"]
 # What each building is for (its "ai_goal" in data/buildings.json)
 const BUILD_GOALS = ["defend", "stabilize", "income", "supplies", "crew", "develop", "food", "materials", "recycle"]
 # The AI only builds while it has this much wealth to spare
@@ -19,7 +19,6 @@ var days_until_next_move: int = 3
 var food_net: float = 0.0
 # Set each decision: whether scouted, unclaimed land is ready to settle
 var has_settle_target: bool = false
-var days_until_next_build: int = 10
 var days_until_next_diplomacy: int = 12
 # A planned war: who, and on what day it will be declared ("" / -1 when there's no plan)
 var war_plan_target: String = ""
@@ -32,7 +31,6 @@ func think(city: CityMap):
 	var econ = city.daily_economy(faction_id)["supplies"]
 	food_net = econ["income"] - econ["upkeep"]
 	_think_war(city)
-	_think_build(city)
 	_think_diplomacy(city)
 	if city.day % 30 == 7:
 		city.ai_manage_council(faction_id)
@@ -40,11 +38,17 @@ func think(city: CityMap):
 	if days_until_next_move > 0:
 		return
 	days_until_next_move = city.rng.randi_range(3, 7)
+	# One move at a time, from one list: building at home competes with ventures abroad for the same
+	# turn and the same stocks, so a faction that builds up grows outward more slowly (and the other way round)
+	var me: Faction = city.factions[faction_id]
+	# The best thing to do at home: a reform, an ambition or a building
+	var home = _best_at_home(city)
 	# Bigger factions run more operations at once
 	if city.active_venture_count(faction_id) >= MAX_ACTIVE_VENTURES + city.districts_held(faction_id) / 8:
+		if home["score"] > 0.0:
+			home["act"].call()
 		return
 
-	var me: Faction = city.factions[faction_id]
 	# Whether any scouted, unclaimed land is ready to settle: if not, scouting comes first
 	has_settle_target = false
 	for d in city.districts:
@@ -54,27 +58,42 @@ func think(city: CityMap):
 	var best_score = MIN_SCORE
 	var best_venture = ""
 	var best_district: District = null
+	var council_free = not city.available_leaders(faction_id).filter(func(c): return c.post != "").is_empty()
 	for d in city.districts:
 		# One operation per district at a time, rather than piling on
 		if city.has_venture_at(faction_id, d):
 			continue
 		for venture_id in GameData.ventures():
-			if city.check_launch(faction_id, venture_id, d) != "":
+			# Routine work on its own land is a councillor's standing task, by the same rules as the player's
+			if city.is_task(faction_id, venture_id, d):
+				if not council_free or city.task_at(faction_id, venture_id, d) or city.task_done_reason(faction_id, venture_id, d) != "":
+					continue
+				if city.check_launch(faction_id, venture_id, d, -2, -1, 0, true) != "":
+					continue
+			elif city.check_launch(faction_id, venture_id, d) != "":
 				continue
 			var target_id = city.venture_target(faction_id, venture_id, d)
 			var odds = VentureSystem.compute_odds(venture_id, me, d, city, target_id)["odds"]
 			var goal: String = GameData.venture(venture_id)["ai_goal"]
 			# Factions lean into what their traits make them good at
 			var preference = me.traits.venture_modifier(venture_id)
-			var score = odds * _value(goal, d, me, target_id, city) * preference * _temperament(goal, me) * city.rng.randf_range(0.7, 1.3)
+			var score = odds * _value(goal, d, me, target_id, city) * preference * temperament(goal, me) * city.rng.randf_range(0.7, 1.3)
 			if score > best_score:
 				best_score = score
 				best_venture = venture_id
 				best_district = d
 
+	if home["score"] > best_score:
+		home["act"].call()
+		return
 	if best_district:
-		# The best free captain leads; a rich faction pays for better odds
-		city.launch_venture(faction_id, best_venture, best_district, -2, -1, 2 if me.wealth > 300.0 else (1 if me.wealth > 120.0 else 0))
+		if city.is_task(faction_id, best_venture, best_district):
+			city.assign_task(faction_id, best_venture, best_district)
+			return
+		# The best free captain leads, with the same recommended crew and funding the player's planner offers
+		var leader = city.best_leader(faction_id, GameData.venture(best_venture)["skill"])
+		var plan = city.recommended_plan(faction_id, best_venture, best_district, leader)
+		city.launch_venture(faction_id, best_venture, best_district, leader.id if leader else -2, plan["crew"], plan["funding"])
 
 # Wars are planned against a weaker neighbour, announced in advance, and ended when worn down
 func _think_war(city: CityMap):
@@ -141,7 +160,7 @@ func war_appeal(city: CityMap, enemy_id: String) -> Dictionary:
 	for vassal_id in city.vassals_of(faction_id):
 		my_strength += city.faction_strength(vassal_id)
 	# A full war chest makes a faction bolder
-	var aggression = me.traits.effect("aggression_mult") * (1.0 + minf(me.wealth / 1000.0, 1.5))
+	var aggression = me.effect("aggression_mult") * (1.0 + minf(me.wealth / 1000.0, 1.5))
 	if opinion < -25.0:
 		aggression *= 1.2
 	if r.trade:
@@ -235,14 +254,20 @@ func _diplomacy_value(action_id: String, other_id: String, me: Faction, city: Ci
 				return 0.0
 			return 0.4
 		"trade":
-			return (0.6 if my_view > -20.0 else 0.0) * me.traits.effect("trade_interest_mult")
+			return (0.6 if my_view > -20.0 else 0.0) * me.effect("trade_interest_mult")
 		"pact":
 			if city.relation(faction_id, other_id).pact:
 				return 0.9 if my_view > -10.0 else 0.0
 			if my_view < -30.0:
 				return 0.0
-			var threatened = city.faction_strength(other_id) > city.faction_strength(faction_id) * 1.2 or city.at_war_with_anyone(faction_id)
-			return 0.7 if threatened else 0.15
+			# A pact is worth asking for from a stronger neighbour with reason to be feared: raiders, someone
+			# who raided us lately, or someone who dislikes us. Being merely weaker isn't reason enough.
+			var r = city.relation(faction_id, other_id)
+			var stronger = city.faction_strength(other_id) > city.faction_strength(faction_id) * 1.2
+			var menacing = city.is_raider(other_id) or r.menaced_recently(other_id, city.day, int(GameData.rule("menace_memory_days"))) or my_view < 0.0
+			var threatened = (stronger and menacing) or city.at_war_with_anyone(faction_id)
+			# Raiders live by raiding: they rarely offer to stop
+			return (0.7 if threatened else 0.1) * (0.3 if city.is_raider(faction_id) else 1.0)
 		"alliance":
 			if city.relation(faction_id, other_id).alliance:
 				return 1.0 if my_view > 0.0 else 0.0
@@ -251,14 +276,67 @@ func _diplomacy_value(action_id: String, other_id: String, me: Faction, city: Ci
 			return 0.6 if my_view > -10.0 else 0.0
 		"integrate":
 			return 1.5
+		"tribute":
+			# Buy peace from a stronger faction that keeps raiding us
+			var r = city.relation(faction_id, other_id)
+			var raided = r.last_raid[other_id] > 0 and city.day - r.last_raid[other_id] <= 60
+			return 0.8 if raided and city.faction_strength(other_id) > city.faction_strength(faction_id) else 0.0
+		"demand":
+			# Raiders ask before they take, more often the stronger the victim
+			var ratio = clampf(city.faction_strength(other_id) / maxf(1.0, city.faction_strength(faction_id)), 0.3, 1.5)
+			return 0.4 * temperament("harass", me) * ratio if temperament("harass", me) > 1.0 else 0.0
 	return 0.0
 
 # Every week or so, spend spare wealth on the building that best fits its situation
-func _think_build(city: CityMap):
-	days_until_next_build -= 1
-	if days_until_next_build > 0:
-		return
-	days_until_next_build = city.rng.randi_range(5, 10)
+# The best of the three things a faction can do at home, as {"score", "act"} (act is what doing it means)
+func _best_at_home(city: CityMap) -> Dictionary:
+	var best = {"score": 0.0, "act": func(): pass}
+	var build = _best_build(city)
+	if build["district"]:
+		best = {"score": build["score"], "act": func(): city.start_construction(faction_id, build["building"], build["district"])}
+	var pursuit = _best_ambition(city)
+	if pursuit["id"] != "" and pursuit["score"] > best["score"]:
+		best = {"score": pursuit["score"], "act": func(): city.start_ambition(faction_id, pursuit["id"])}
+	var reform = _best_reform(city)
+	if reform["id"] != "" and reform["score"] > best["score"]:
+		best = {"score": reform["score"], "act": func(): city.take_reform(faction_id, reform["id"])}
+	return best
+
+# The reform it most wants, if it can take one: a gang is keen to become a Warlord crew; after that, its
+# traits lean it (a Militaristic crew wants Autocracy, a Socialist one the Politburo)
+func _best_reform(city: CityMap) -> Dictionary:
+	var me: Faction = city.factions[faction_id]
+	var best = {"id": "", "score": 0.0}
+	if me.reform_locked_until > city.day:
+		return best
+	for gov_id in city.reform_options(faction_id):
+		if city.check_reform(faction_id, gov_id) != "":
+			continue
+		var gov = GameData.government(gov_id)
+		var want = 1.5 if gov_id == "warlord" else GameData.rule("ai_reform_weight") * temperament(gov["ai_goal"], me)
+		var score = want * city.rng.randf_range(0.7, 1.3)
+		if score > best["score"]:
+			best = {"id": gov_id, "score": score}
+	return best
+
+# The National Ambition it most wants to start, on the same scale as ventures: {"id", "score"}. Its traits
+# lean it (a Militaristic crew wants War ambitions), and it only starts one it qualifies for and can pay for.
+func _best_ambition(city: CityMap) -> Dictionary:
+	var me: Faction = city.factions[faction_id]
+	var best = {"id": "", "score": 0.0}
+	if me.ambition != "":
+		return best
+	for id in GameData.national_ambitions():
+		if city.check_ambition(faction_id, id) != "":
+			continue
+		var def = GameData.national_ambition(id)
+		var score = def["ai_value"] * temperament(def["ai_goal"], me) * GameData.rule("ai_ambition_weight") * city.rng.randf_range(0.7, 1.3)
+		if score > best["score"]:
+			best = {"id": id, "score": score}
+	return best
+
+# The building it most wants now, scored on the same scale as ventures: {"building", "district", "score"}
+func _best_build(city: CityMap) -> Dictionary:
 	var me: Faction = city.factions[faction_id]
 	# Don't take on upkeep the treasury can't carry
 	var econ = city.daily_economy(faction_id)["wealth"]
@@ -276,13 +354,12 @@ func _think_build(city: CityMap):
 			if city.check_build(faction_id, building_id, d) != "" or needs_wealth or def["upkeep"].get("wealth", 0.0) > net:
 				continue
 			var goal: String = GameData.building(building_id)["ai_goal"]
-			var score = _build_value(goal, d, me, city) * city.rng.randf_range(0.8, 1.2)
+			var score = _build_value(goal, d, me, city) * temperament(goal, me) * GameData.rule("ai_build_weight") * city.rng.randf_range(0.7, 1.3)
 			if score > best_score:
 				best_score = score
 				best_building = building_id
 				best_district = d
-	if best_district:
-		city.start_construction(faction_id, best_building, best_district)
+	return {"building": best_building, "district": best_district, "score": best_score}
 
 func _build_value(goal: String, d: District, me: Faction, city: CityMap) -> float:
 	match goal:
@@ -365,25 +442,33 @@ func _value(goal: String, d: District, me: Faction, target_id: String, city: Cit
 				return 0.6 + (0.8 if threatened else 0.0)
 			return 0.3 if me.arms < 15.0 else 0.08
 		"harass":
-			return 0.4 * (1.5 if me.supplies < 20.0 else 0.8)
+			# Raid for what's worth taking, most of all when short; hold off while a demand is out
+			if target_id != "" and (city.mission_between(faction_id, target_id) or city.proposal_between(faction_id, target_id) >= 0):
+				return 0.0
+			var need = 1.5 if me.supplies < 20.0 or me.materials < 15.0 else 0.8
+			var bold = 1.5 if target_id != "" and city.relation(faction_id, target_id).bold_until[faction_id] > city.day else 1.0
+			return 0.75 * city.raid_worth(d) * need * bold
+		"deter":
+			# Warn off whoever raided us in the last two months
+			var raided_on = city.relation(faction_id, target_id).last_raid[target_id] if target_id != "" else 0
+			return 0.45 if raided_on > 0 and city.day - raided_on <= 60 else 0.0
 		"conquer":
 			return 1.2 + d.share(faction_id) / 100.0
 		"income":
 			return d.development * (1.4 if me.wealth < 25.0 else 0.5)
 		"subvert":
 			var target: Faction = city.factions.get(target_id)
-			var draw = target.traits.effect("draws_agitation_mult") if target else 1.0
+			var draw = target.effect("draws_agitation_mult") if target else 1.0
 			return (d.grievance / 100.0 + 0.2) * draw
 		"stabilize":
 			return maxf(0.0, d.grievance - 40.0) / 30.0
 	return 0.0
 
 func to_dict() -> Dictionary:
-	return {"days_until_next_move": days_until_next_move, "days_until_next_build": days_until_next_build, "days_until_next_diplomacy": days_until_next_diplomacy, "war_plan_target": war_plan_target, "war_plan_day": war_plan_day}
+	return {"days_until_next_move": days_until_next_move, "days_until_next_diplomacy": days_until_next_diplomacy, "war_plan_target": war_plan_target, "war_plan_day": war_plan_day}
 
 func load_dict(data: Dictionary):
 	days_until_next_move = int(data.get("days_until_next_move", 3))
-	days_until_next_build = int(data.get("days_until_next_build", 10))
 	days_until_next_diplomacy = int(data.get("days_until_next_diplomacy", 12))
 	war_plan_target = data.get("war_plan_target", "")
 	war_plan_day = int(data.get("war_plan_day", -1))
@@ -394,16 +479,14 @@ func _home_secured(city: CityMap) -> bool:
 		return true
 	return city.districts[me.home_id].share(faction_id) >= GameData.rule("secure_threshold")
 
-# What a faction's personality makes it keen on (or reluctant about): raiders raid, traders trade,
-# hermits dig in. Minor factions grow slowly whatever they are.
-const TEMPERAMENTS = {
-	"raider": {"harass": 3.0, "conquer": 1.5, "expand": 0.6, "buy": 0.3, "develop": 0.5, "arms": 1.5},
-	"trader": {"buy": 2.0, "income": 1.5, "harass": 0.3, "expand": 0.8},
-	"hermit": {"expand": 0.5, "harass": 0.15, "conquer": 0.3, "control": 1.4, "develop": 1.3, "food": 1.2},
-}
-
-func _temperament(goal: String, me: Faction) -> float:
-	var mult: float = TEMPERAMENTS.get(me.personality, {}).get(goal, 1.0)
-	if me.minor and goal in ["expand", "scout"]:
+# What a faction is keen on (or reluctant about) comes from its active traits (data/traits.json "ai_goals"):
+# a Militaristic crew raids, a Merchant one trades, a Socialist one digs in. The same for every faction,
+# player included, so a crew that stops raiding stops being raiders. Gangs grow slowly until they become Warlord crews.
+static func temperament(goal: String, me: Faction) -> float:
+	var mult = 1.0
+	for trait_name in me.traits.get_active_traits():
+		mult *= float(GameData.traits()[trait_name].get("ai_goals", {}).get(goal, 1.0))
+	# A gang grows slowly; once it becomes a Warlord crew it expands like anyone else
+	if me.minor and me.government == "gang" and goal in ["expand", "scout"]:
 		mult *= 0.5
 	return mult

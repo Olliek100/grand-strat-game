@@ -31,7 +31,7 @@
 		"description": "Lookouts and barricades. Raids, assaults and agitation here are 20% less likely to succeed.",
 		"summary": "-20% hostile odds here",
 		"requires": "claimed",
-		"cost": {"materials": 20, "wealth": 10},
+		"cost": {"materials": 25},
 		"crew": 2,
 		"days": 15,
 		"upkeep": {"supplies": 0.05},

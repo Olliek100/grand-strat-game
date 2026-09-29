@@ -10,7 +10,7 @@ signal first_contact(faction_id: String)
 # Big moments that deserve a pop-up: first contact, war on you, civil war, a leader's death
 signal major_event(title: String, text: String, faction_id: String)
 
-const SAVE_VERSION = 5
+const SAVE_VERSION = 7
 const SAVE_PATH = "user://savegame.sav"
 
 const DAYS_PER_MONTH = 30
@@ -24,6 +24,8 @@ var factions: Dictionary = {}
 # "a|b" (ids sorted) -> Relation, created on first use
 var relations: Dictionary = {}
 var ventures: Array[ActiveVenture] = []
+# Councillors' standing tasks (doc 13)
+var tasks: Array[StandingTask] = []
 var constructions: Array[Construction] = []
 # Named characters of every faction (see character.gd)
 var characters: Array[Character] = []
@@ -37,6 +39,16 @@ var graveyard: Array[Character] = []
 var missions: Array[DiplomaticMission] = []
 # Proposals from AI factions waiting for the player's answer: {"action", "from", "expires_day"}
 var proposals: Array = []
+# Factions whose first demand for tribute has already been shown as a pop-up
+var demand_warned: Array = []
+# is_raider() answers, kept for the current day (not saved)
+var raider_cache: Dictionary = {}
+var raider_cache_day: int = -1
+# war_enemies() answers, cleared whenever a war starts or ends (not saved)
+var war_cache: Dictionary = {}
+# shares_border() answers for the current day (not saved)
+var border_cache: Dictionary = {}
+var border_cache_day: int = -1
 var day: int = 0
 var rng := RandomNumberGenerator.new()
 # Whose point of view the UI and alerts use
@@ -92,7 +104,8 @@ func _setup_scenario(scenario: Dictionary):
 		f.materials = def.get("materials", 15.0)
 		f.arms = def.get("arms", 0.0)
 		f.minor = def.get("minor", false)
-		f.personality = def.get("personality", "")
+		# Gangs start at the bottom rung; the big factions start as Warlord crews
+		f.government = "gang" if f.minor else "warlord"
 		f.blurb = def.get("blurb", "")
 		for trait_name in def.get("traits", {}):
 			f.traits.add_faction_trait_value(trait_name, def["traits"][trait_name])
@@ -236,6 +249,42 @@ func has_venture_at(faction_id: String, district: District) -> bool:
 			return true
 	return false
 
+# Raiders are a faction whose traits make raiding its first instinct (see FactionAI.temperament); nobody is
+# labelled a raider, and a crew that stops raiding stops being one
+func is_raider(faction_id: String) -> bool:
+	# Asked for every border district on every AI move, so worked out once a day
+	if raider_cache_day != day:
+		raider_cache_day = day
+		raider_cache.clear()
+	if not raider_cache.has(faction_id):
+		raider_cache[faction_id] = factions.has(faction_id) and FactionAI.temperament("harass", factions[faction_id]) >= GameData.rule("raider_temperament")
+	return raider_cache[faction_id]
+
+# How a faction behaves, in a word or two, read from the same trait leanings its AI uses
+func faction_manner(faction_id: String) -> String:
+	var f: Faction = factions[faction_id]
+	if is_raider(faction_id):
+		return "raiders"
+	if FactionAI.temperament("buy", f) >= 1.5:
+		return "traders"
+	if FactionAI.temperament("control", f) >= 1.2:
+		return "keeps to itself"
+	return "independent"
+
+# A venture's success chance as things stand now (it's rolled on these odds when it lands)
+func venture_odds(v: ActiveVenture) -> float:
+	var f: Faction = factions.get(v.faction_id)
+	if f == null:
+		return 0.0
+	return VentureSystem.compute_odds(v.venture_id, f, v.district, self, v.target_id, character_by_id(v.leader_id), v.crew, v.funding)["odds"]
+
+# How many defenders a faction could send to guard a district if it's attacked: its idle manpower, up to a full guard
+func possible_defenders(faction_id: String) -> int:
+	var f: Faction = factions.get(faction_id)
+	if f == null:
+		return 0
+	return mini(int(f.manpower), int(GameData.venture("reinforce")["crew_range"][1]))
+
 func active_venture_count(faction_id: String) -> int:
 	var count = 0
 	for v in ventures:
@@ -270,10 +319,19 @@ func has_open_frontier(faction_id: String) -> bool:
 
 # True if a owns a district that borders land b owns
 func shares_border(a_id: String, b_id: String) -> bool:
-	for d in districts:
-		if d.owner_id() == b_id and borders_territory(a_id, d):
-			return true
-	return false
+	# Asked for every pair on every diplomacy pass; land changes hands only when ventures land, so worked out once a day
+	if border_cache_day != day:
+		border_cache_day = day
+		border_cache.clear()
+	var key = a_id + "|" + b_id
+	if not border_cache.has(key):
+		var found = false
+		for d in districts:
+			if d.owner_id() == b_id and borders_territory(a_id, d):
+				found = true
+				break
+		border_cache[key] = found
+	return border_cache[key]
 
 func date_string() -> String:
 	var year = day / (DAYS_PER_MONTH * MONTHS_PER_YEAR) + 1
@@ -295,11 +353,14 @@ func is_at_war(a_id: String, b_id: String) -> bool:
 	return relation(a_id, b_id).at_war
 
 func war_enemies(faction_id: String) -> Array:
-	var enemies = []
-	for fid in factions:
-		if is_at_war(faction_id, fid):
-			enemies.append(fid)
-	return enemies
+	# Asked thousands of times a day by the AI; kept until a war starts or ends, or a faction goes
+	if not war_cache.has(faction_id):
+		var enemies = []
+		for fid in factions:
+			if is_at_war(faction_id, fid):
+				enemies.append(fid)
+		war_cache[faction_id] = enemies
+	return war_cache[faction_id]
 
 func at_war_with_anyone(faction_id: String) -> bool:
 	return not war_enemies(faction_id).is_empty()
@@ -382,6 +443,17 @@ func proposal_between(from_id: String, to_id: String) -> int:
 
 func add_proposal(action_id: String, from_id: String):
 	proposals.append({"action": action_id, "from": from_id, "expires_day": day + int(GameData.rule("proposal_expiry_days"))})
+	if GameData.diplomacy_action(action_id)["kind"] == "demand":
+		var price = Diplomacy._amount_text(Diplomacy.tribute_price(self, player_id, from_id))
+		var text = "The %s demand tribute: %s, or they come and take it. Pay, and they leave you alone for %d days. Refuse, and their raids on you get +%d%% odds. Answer in Diplomacy (F4)." % [
+			faction_name(from_id), price, GameData.diplomacy_action("demand")["spare_days"], roundi((GameData.rule("emboldened_odds") - 1.0) * 100)]
+		# The first demand from a faction stops the game, so it can't slip past in the log
+		if from_id not in demand_warned:
+			demand_warned.append(from_id)
+			major_event.emit("The %s demand tribute" % faction_name(from_id), text, from_id)
+		else:
+			event.emit(text, "alert")
+		return
 	event.emit("The %s propose %s. Answer in Diplomacy (F4)." % [faction_name(from_id), GameData.diplomacy_action(action_id).get("proposal", action_id)], "alert")
 
 func answer_proposal(index: int, accept: bool, expired: bool = false):
@@ -393,6 +465,8 @@ func answer_proposal(index: int, accept: bool, expired: bool = false):
 		return
 	if accept and Diplomacy.check_action(self, p["action"], p["from"], player_id, true) == "":
 		Diplomacy.form_treaty(self, p["action"], p["from"], player_id)
+	elif GameData.diplomacy_action(p["action"])["kind"] == "demand":
+		Diplomacy._demand_refused(self, p["from"], player_id)
 	else:
 		change_opinion(p["from"], player_id, -5.0, "declined")
 		var what = "went unanswered and lapsed" if expired else "was turned down"
@@ -438,6 +512,7 @@ func call_to_arms(attacker_id: String, defender_id: String):
 func start_war(faction_id: String, target_id: String):
 	var r = relation(faction_id, target_id)
 	r.at_war = true
+	war_cache.clear()
 	r.war_start_day = day
 	r.peace_offered_by = ""
 	r.exhaustion = {r.a: 0.0, r.b: 0.0}
@@ -459,6 +534,7 @@ func _join_war(joiner_id: String, enemy_id: String, friend_id: String):
 		return
 	var r = relation(joiner_id, enemy_id)
 	r.at_war = true
+	war_cache.clear()
 	r.war_start_day = day
 	r.peace_offered_by = ""
 	r.exhaustion = {r.a: 0.0, r.b: 0.0}
@@ -492,6 +568,7 @@ func make_peace(faction_id: String, target_id: String) -> String:
 		var winner = r.a if r.exhaustion[r.a] < r.exhaustion[r.b] else r.b
 		factions[winner].stats["wars_won"] += 1
 	r.at_war = false
+	war_cache.clear()
 	r.peace_offered_by = ""
 	r.truce_until_day = day + truce_days
 	if r.involves(player_id):
@@ -565,6 +642,10 @@ func retire_faction(faction_id: String, into_id: String = ""):
 	var f: Faction = factions.get(faction_id)
 	if f == null:
 		return
+	war_cache.clear()
+	for t in tasks.duplicate():
+		if t.faction_id == faction_id:
+			tasks.erase(t)
 	var into: Faction = factions.get(into_id)
 	for d in districts:
 		if d.influence.has(faction_id):
@@ -635,7 +716,7 @@ func venture_target(faction_id: String, venture_id: String, district: District) 
 	match GameData.venture(venture_id)["target"]:
 		"market":
 			return district.owner_id() if district.owner_id() != faction_id else ""
-		"enemy_border":
+		"enemy_border", "raider_border":
 			var owner = district.owner_id()
 			return owner if owner != faction_id else ""
 		"war_border":
@@ -657,6 +738,25 @@ func venture_cost(venture_id: String, funding: int) -> Dictionary:
 		cost["wealth"] = cost.get("wealth", 0.0) + def["funding_cost"] * funding
 	return cost
 
+# The plan a careful commander picks: crew until one more adds little, stopping once the odds are safe. Extra
+# funding is never added for you: wealth is for buildings and relations, so paying more is always your call.
+# The planner starts on it and the AI launches with it: one rule for both.
+func recommended_plan(faction_id: String, venture_id: String, d: District, leader: Character) -> Dictionary:
+	var f: Faction = factions[faction_id]
+	var def = GameData.venture(venture_id)
+	var target_id = venture_target(faction_id, venture_id, d)
+	var safe: float = GameData.rule("no_disaster_odds")
+	var crew = int(def["crew"])
+	var odds: float = VentureSystem.compute_odds(venture_id, f, d, self, target_id, leader, crew, 0)["odds"]
+	var spare = int(f.manpower) - int(GameData.rule("plan_manpower_reserve"))
+	while crew < int(def["crew_range"][1]) and crew + 1 <= spare and odds < safe:
+		var next: float = VentureSystem.compute_odds(venture_id, f, d, self, target_id, leader, crew + 1, 0)["odds"]
+		if next - odds < GameData.rule("plan_min_gain"):
+			break
+		crew += 1
+		odds = next
+	return {"crew": crew, "funding": 0}
+
 # Days a venture takes: a skilled leader gets it done faster
 # Days a venture takes: a skilled leader is quicker; attacks on a well-defended district take longer
 func venture_days(venture_id: String, leader: Character, district: District = null) -> int:
@@ -669,6 +769,20 @@ func venture_days(venture_id: String, leader: Character, district: District = nu
 	return maxi(3, days)
 
 # --- Defence ---------------------------------------------------------------------------
+
+# How dangerous a district is to work in: its ferals, traps and rotten floors (hazard, cut by Safeguard the
+# Shelter), less as its ruins are cleared, for whoever holds it. A rebuilt home with the rubble gone is
+# near safe; raids and fighting bring the ruins, and the danger, back.
+func danger(d: District) -> float:
+	if d.owner_id() == "":
+		return d.hazard
+	return d.hazard * (GameData.rule("danger_cleared") + (1.0 - GameData.rule("danger_cleared")) * d.ruin_level)
+
+# How much a raid here is worth, as a multiplier on its loot: a fresh claim yields little,
+# a rebuilt district with working buildings a lot
+func raid_worth(d: District) -> float:
+	var working = d.buildings.size() if buildings_active(d) else 0
+	return minf(GameData.rule("raid_worth_max"), GameData.rule("raid_worth_base") + d.development + GameData.rule("raid_worth_per_building") * working)
 
 # How much the owner's control shields a district: 1.0 at a bare claim (50), 0.65 at full control
 func control_defence(d: District) -> float:
@@ -727,15 +841,18 @@ func district_threatened(faction_id: String, d: District) -> bool:
 	for n_id in d.neighbor_ids:
 		var other = districts[n_id].owner_id()
 		if other != "" and other != faction_id:
-			if is_at_war(faction_id, other) or factions[other].personality == "raider":
+			if is_at_war(faction_id, other) or (is_raider(other) and relation(faction_id, other).spare_until[other] <= day):
 				return true
 	return false
 
 # Returns "" if the venture can be launched, otherwise the reason it can't.
 # leader_id -2 means "any available leader" (the best one is picked at launch); crew -1 means the usual crew.
-func check_launch(faction_id: String, venture_id: String, district: District, leader_id: int = -2, crew: int = -1, funding: int = 0) -> String:
+func check_launch(faction_id: String, venture_id: String, district: District, leader_id: int = -2, crew: int = -1, funding: int = 0, as_task: bool = false) -> String:
 	var f: Faction = factions[faction_id]
 	var def = GameData.venture(venture_id)
+	# Routine work on your own land is a councillor's standing task, not a one-off launch (doc 13)
+	if def.get("task", false) and district.owner_id() == faction_id and not as_task:
+		return "Assign a councillor to this as a standing task"
 	var owner = district.owner_id()
 	match def["target"]:
 		"unclaimed_border":
@@ -775,6 +892,25 @@ func check_launch(faction_id: String, venture_id: String, district: District, le
 				return "You have a treaty with the %s (break it first)" % faction_name(owner)
 			if not borders_territory(faction_id, district):
 				return "Not on your border"
+			if def.has("raid_cooldown"):
+				var promised = relation(faction_id, owner).spare_until[faction_id] - day
+				if promised > 0:
+					return "You promised the %s no raids for %d more days" % [faction_name(owner), promised]
+				if day < district.raid_safe_until:
+					return "Raided recently: safe from raids for %d more days" % (district.raid_safe_until - day)
+				for v in ventures:
+					if v.district == district and v.venture_id == venture_id and v.faction_id != faction_id:
+						return "The %s are already raiding it" % faction_name(v.faction_id)
+		"raider_border":
+			if owner == "" or owner == faction_id:
+				return "Only a faction that raids you can be threatened"
+			if not borders_territory(faction_id, district):
+				return "Not on your border"
+			var r = relation(faction_id, owner)
+			if not r.menaced_recently(owner, day, int(GameData.rule("menace_memory_days"))):
+				return "The %s haven't raided you or demanded tribute lately" % faction_name(owner)
+			if r.spare_until[owner] > day:
+				return "The %s already keep away (%d more days)" % [faction_name(owner), r.spare_until[owner] - day]
 		"war_border":
 			if not at_war_with_anyone(faction_id):
 				return "Declare war first (Diplomacy, F4)"
@@ -817,8 +953,10 @@ func check_launch(faction_id: String, venture_id: String, district: District, le
 			return "Choose a captain to lead it"
 		if leader.is_wounded(day):
 			return "%s is recovering from wounds" % leader.name
-		if leader_busy(leader):
-			return "%s is already out on a venture" % leader.name
+		# A councillor on a standing task is only busy for their own task while a run is out
+		var out_now = ventures.any(func(other): return other.leader_id == leader.id)
+		if out_now or (not as_task and leader_busy(leader)):
+			return "%s is already out on a venture" % leader.name if out_now else "%s is committed to a task" % leader.name
 	var size = int(def["crew"]) if crew < 0 else crew
 	if size < int(def["crew_range"][0]) or size > int(def["crew_range"][1]):
 		return "Crew must be %d-%d" % [def["crew_range"][0], def["crew_range"][1]]
@@ -829,8 +967,8 @@ func check_launch(faction_id: String, venture_id: String, district: District, le
 		return short + (" (or pick less extra funding)" if funding > 0 and f.can_afford(venture_cost(venture_id, 0)) else "")
 	return ""
 
-func launch_venture(faction_id: String, venture_id: String, district: District, leader_id: int = -2, crew: int = -1, funding: int = 0) -> String:
-	var err = check_launch(faction_id, venture_id, district, leader_id, crew, funding)
+func launch_venture(faction_id: String, venture_id: String, district: District, leader_id: int = -2, crew: int = -1, funding: int = 0, as_task: bool = false) -> String:
+	var err = check_launch(faction_id, venture_id, district, leader_id, crew, funding, as_task)
 	if err != "":
 		return err
 	var f: Faction = factions[faction_id]
@@ -842,7 +980,15 @@ func launch_venture(faction_id: String, venture_id: String, district: District, 
 	f.manpower -= size
 	var v = ActiveVenture.new(venture_id, faction_id, target_id, district, size, venture_days(venture_id, leader, district))
 	v.leader_id = leader.id
+	v.task = as_task
 	v.funding = funding
+	v.launch_odds = VentureSystem.compute_odds(venture_id, f, district, self, target_id, leader, size, funding)["odds"]
+	# Reaching past your own land (claiming, raiding, trading at their market) counts as abroad
+	var abroad = def["target"] in ["unclaimed_border", "scout", "enemy_border", "war_border", "raider_border", "market"] or (def["target"] == "scavenge" and district.owner_id() != faction_id)
+	f.lean["abroad" if abroad else "home"] += 1.0
+	# Raiding breaks an ambition that must be pursued in peace (Welfare for All)
+	if def.get("hostile", false) and f.ambition != "" and GameData.national_ambition(f.ambition).get("while", "") == "no_raids":
+		fail_ambition(faction_id, "you launched a %s" % def["label"].to_lower())
 	ventures.append(v)
 	_feed_trait(f, venture_id, 2.0)
 	# Raiding or stirring up a trade partner ends the deal
@@ -852,6 +998,9 @@ func launch_venture(faction_id: String, venture_id: String, district: District, 
 		event.emit("The trade agreement between the %s and the %s collapsed over the %s." % [
 			faction_name(faction_id), faction_name(target_id), def["label"].to_lower()], "alert" if target_id == player_id or faction_id == player_id else "info")
 
+	# A task's runs are summed up in its digest, not announced one by one
+	if as_task:
+		return ""
 	var tiers = VentureSystem.compute_odds(venture_id, f, district, self, target_id, leader, size, funding)["tiers"]
 	var odds_text = "%d%% success, %d%% disaster" % [(tiers["triumph"] + tiers["success"]) * 100, tiers["disaster"] * 100]
 	if faction_id == player_id:
@@ -886,24 +1035,55 @@ func _resolve(v: ActiveVenture):
 		f.manpower += v.crew
 		var note = "%s: %s in %s called off, the %s hold it now." % [f.display_name, def["label"], d.district_name, faction_name(now_owner)]
 		event.emit(note, "bad" if f.id == player_id else "info")
+		if v.task:
+			_task_run_over(v, {})
 		return
 
 	var owner_before = d.owner_id()
 	var chances = VentureSystem.compute_odds(v.venture_id, f, d, self, v.target_id, leader, v.crew, v.funding)
-	var tier = VentureSystem.roll_tier(chances["tiers"], rng)
+	# The target may have reacted since launch (defenders arriving): say so, with the reason
+	var moved = chances["odds"] - v.launch_odds
+	var odds_note = ""
+	if absf(moved) > 0.02 and v.launch_odds > 0.0:
+		var guards = defenders_at(v.target_id, d) if v.target_id != "" else 0
+		odds_note = "odds had %s from %d%% to %d%%%s" % ["fallen" if moved < 0.0 else "risen", v.launch_odds * 100, chances["odds"] * 100,
+			" (%d defenders on guard)" % guards if guards > 0 and moved < 0.0 else ""]
+	var outcome = VentureSystem.roll_outcome(chances["tiers"], rng)
+	var tier: String = outcome["tier"]
 	var success = tier == "triumph" or tier == "success"
 	var effects: Array = (def["success_effects"] if success else def["failure_effects"]).duplicate()
 	if tier == "triumph":
 		effects.append_array(def.get("triumph_effects", []))
 	elif tier == "disaster":
 		effects.append_array(def.get("disaster_effects", []))
-	var result = VentureSystem.apply_effects(effects, f, v.target_id, d, self, v.crew)
+	# What the district was worth before the raid wrecked any of it
+	var worth = raid_worth(d)
+	var result = VentureSystem.apply_effects(effects, f, v.target_id, d, self, v.crew, outcome["quality"])
+	if odds_note != "":
+		result["notes"].push_front(odds_note)
+	# How cleanly a success went scales what it brought home
+	if outcome["quality"] >= 1.1:
+		result["notes"].push_front("a clean job (x%.1f)" % outcome["quality"])
+	elif success and outcome["quality"] <= 0.9:
+		result["notes"].push_front("only just (x%.1f)" % outcome["quality"])
 	# Attackers who fail against a guarded district are driven off with extra losses
 	if def.get("hostile", false) and not success and v.target_id != "" and defenders_at(v.target_id, d) >= 2:
 		var driven_off = mini(rng.randi_range(1, 3), v.crew - result["lost"])
 		result["lost"] += driven_off
 		result["notes"].append("driven off by %d defenders (%d more lost)" % [defenders_at(v.target_id, d), driven_off])
 	var lost = mini(result["lost"], v.crew)
+	if def.has("raid_cooldown"):
+		d.raid_safe_until = maxi(d.raid_safe_until, day + int(def["raid_cooldown"][tier]))
+		if v.target_id != "":
+			relation(f.id, v.target_id).last_raid[f.id] = day
+		if not success and defenders_at(v.target_id, d) >= 2:
+			result["notes"].append("the %s lick their wounds" % f.display_name)
+		result["notes"].append("no raids on %s for %d days" % [d.district_name, d.raid_safe_until - day])
+		# Hitting a built-up district worries everyone next door to the victim
+		if success and v.target_id != "" and worth >= 1.0:
+			for fid in factions:
+				if fid != f.id and fid != v.target_id and shares_border(fid, v.target_id):
+					change_opinion(fid, f.id, GameData.rule("raid_neighbour_anger"), "raids_neighbours")
 	# Settlers stay for good and become the district's people: expansion costs people
 	var settlers = 0
 	if def.get("settlers", false) and success:
@@ -913,7 +1093,7 @@ func _resolve(v: ActiveVenture):
 	if success:
 		_feed_trait(f, v.venture_id, 6.0 if tier == "triumph" else 4.0)
 	if tier == "triumph":
-		f.renown += 2.0
+		f.add_renown(2.0)
 
 	var log_key = {"triumph": "triumph_log", "success": "success_log", "setback": "failure_log", "disaster": "disaster_log"}[tier]
 	var detail: String = def.get(log_key, def["success_log"] if success else def["failure_log"]).format(result["values"])
@@ -925,7 +1105,7 @@ func _resolve(v: ActiveVenture):
 		text += ", %d crew lost" % lost
 	if settlers > 0:
 		text += ", %d settle there for good" % settlers
-	var fate = _leader_outcome(leader, tier, def)
+	var fate = _leader_outcome(leader, tier, def, v.task)
 	if fate != "":
 		text += ". " + fate
 	var kind = "info"
@@ -933,14 +1113,28 @@ func _resolve(v: ActiveVenture):
 		kind = "good" if success else ("alert" if fate.contains("killed") else "bad")
 	elif v.target_id == player_id and def.get("hostile", false):
 		kind = "bad" if success else "good"
-	event.emit(text, kind)
+	# A task's ordinary successes go into its monthly digest; triumphs, failures, wounds and deaths still show
+	if not (v.task and tier == "success" and fate == ""):
+		event.emit(text, kind)
+	if v.task:
+		_task_run_over(v, result["values"])
 	if def["target"] == "war_border" and owner_before != f.id and d.owner_id() == f.id:
 		f.stats["districts_conquered"] += 1
 	_announce_ownership_change(d, owner_before, f.id)
 
+# A task's run has landed (or been called off): count what it brought, then carry on, wait or finish
+func _task_run_over(v: ActiveVenture, values: Dictionary):
+	for t in tasks:
+		if t.character_id == v.leader_id and t.venture_id == v.venture_id and t.district_id == v.district.id:
+			for key in values:
+				t.gains[key] = t.gains.get(key, 0) + int(values[key])
+			t.digest_runs += 1
+			_continue_task(t)
+			return
+
 # What happens to the leader: skill grows with triumphs, setbacks can wound, disasters can kill.
 # Returns a sentence for the log ("" if nothing notable).
-func _leader_outcome(leader: Character, tier: String, def: Dictionary) -> String:
+func _leader_outcome(leader: Character, tier: String, def: Dictionary, task_run: bool = false) -> String:
 	if leader == null:
 		return ""
 	leader.ventures_led += 1
@@ -961,15 +1155,16 @@ func _leader_outcome(leader: Character, tier: String, def: Dictionary) -> String
 				leader.skills[skill] += 1
 				notes.append("%s's %s rose to %d" % [leader.name, skill.capitalize(), leader.skills[skill]])
 		"setback":
-			if rng.randf() < GameData.rule("setback_wound_chance"):
-				notes.append(_wound(leader))
+			# Standing tasks are familiar work on home ground: they wound half as often
+			if rng.randf() < setback_wound_chance(def) * (GameData.rule("task_wound_mult") if task_run else 1.0):
+				notes.append(_wound(leader, def))
 		"disaster":
 			var roll = rng.randf()
 			if roll < GameData.rule("disaster_death_chance"):
 				_character_died(leader, "killed leading a %s" % def["label"])
 				return "%s was killed" % leader.name
 			if roll < GameData.rule("disaster_death_chance") + GameData.rule("disaster_wound_chance"):
-				notes.append(_wound(leader))
+				notes.append(_wound(leader, def))
 			_earn_trait(leader, "shaken", notes)
 	if leader.ventures_led >= int(GameData.rule("veteran_ventures")):
 		_earn_trait(leader, "veteran", notes)
@@ -977,8 +1172,19 @@ func _leader_outcome(leader: Character, tier: String, def: Dictionary) -> String
 		_earn_trait(leader, "hero", notes)
 	return ". ".join(notes)
 
-func _wound(leader: Character) -> String:
-	var days_range: Array = GameData.rule("wound_days")
+# Careful work (a scavenge, a settlement) wounds less often and less badly than a raid or an assault
+func setback_wound_chance(def: Dictionary) -> float:
+	return clampf(def["danger"], GameData.rule("setback_wound_min"), GameData.rule("setback_wound_chance"))
+
+# Days out of action after a wound on this venture, as [shortest, longest]
+func wound_days(def: Dictionary) -> Array:
+	var safe: Array = GameData.rule("wound_days_safe")
+	var worst: Array = GameData.rule("wound_days")
+	var t = clampf((def["danger"] - GameData.rule("wound_danger_low")) / (GameData.rule("wound_danger_high") - GameData.rule("wound_danger_low")), 0.0, 1.0)
+	return [roundi(lerpf(safe[0], worst[0], t)), roundi(lerpf(safe[1], worst[1], t))]
+
+func _wound(leader: Character, def: Dictionary) -> String:
+	var days_range: Array = wound_days(def)
 	var days = rng.randi_range(int(days_range[0]), int(days_range[1]))
 	leader.wounded_until = day + days
 	leader.wounds += 1
@@ -1004,15 +1210,26 @@ func _record_departure(c: Character, fate: String):
 func leader_availability(faction_id: String) -> String:
 	var parts = []
 	for c in characters_of(faction_id):
-		if c.is_wounded(day):
-			parts.append("%s wounded for %d days" % [c.name, c.wounded_until - day])
-		else:
-			for v in ventures:
-				if v.leader_id == c.id:
-					parts.append("%s back in %d days (%s)" % [c.name, v.days_left, GameData.venture(v.venture_id)["label"]])
+		var why = unavailable_reason(c)
+		if why != "":
+			parts.append("%s %s" % [c.name, why])
 	if characters_of(faction_id).is_empty():
 		return "You have no captains left. New ones join over time while you're under your limit (%d)" % captain_cap(faction_id)
 	return "No captain is free: " + ", ".join(parts)
+
+# Why someone can't lead a venture now ("wounded for 20 days", "back in 6 days (Settle)"), or "" if free
+func unavailable_reason(c: Character) -> String:
+	if c.is_wounded(day):
+		return "wounded for %d days" % (c.wounded_until - day)
+	var t = task_of(c)
+	if t:
+		return "%s %s" % [GameData.venture(t.venture_id)["task_label"].to_lower(), districts[t.district_id].district_name]
+	for v in ventures:
+		if v.leader_id == c.id:
+			return "back in %d days (%s)" % [v.days_left, GameData.venture(v.venture_id)["label"]]
+	if c.committed_until > day:
+		return "free in %d days (after a task)" % (c.committed_until - day)
+	return ""
 
 # Removes a character who died; their comrades take it hard and any council seat falls empty
 func _character_died(c: Character, fate: String):
@@ -1388,6 +1605,9 @@ func designate_heir(faction_id: String, character_id: int) -> String:
 	var c = character_by_id(character_id)
 	if leader == null or c == null or c.faction_id != faction_id or c == leader:
 		return "No such candidate"
+	var gov = GameData.government(factions[faction_id].government)
+	if gov["heir_rule"] != "blood":
+		return "Under a %s nobody can be named heir: %s" % [gov["label"], gov["succession"]]
 	if not c.is_adult():
 		return "%s is too young to rule" % c.name
 	if not (c.family or c.post != ""):
@@ -1424,7 +1644,22 @@ func succession_outlook(faction_id: String, leader: Character = null, honour_cho
 	var crew = characters_of(faction_id).filter(func(c): return c != leader)
 	var heir: Character = null
 	var by_blood = false
-	if leader:
+	# The government sets who succeeds (data/governments.json "heir_rule")
+	var gov = GameData.government(factions[faction_id].government)
+	var council = crew.filter(func(c): return c.post != "")
+	match gov["heir_rule"]:
+		"council_elects", "election":
+			# The council's strongest, most loyal member (an election adds chance: see _succession)
+			var best = -1.0
+			for c in council:
+				if _skill_total(c) + c.loyalty() > best:
+					best = _skill_total(c) + c.loyalty()
+					heir = c
+		"best_steward":
+			for c in council:
+				if heir == null or c.skills["stewardship"] > heir.skills["stewardship"]:
+					heir = c
+	if leader and heir == null and gov["heir_rule"] == "blood":
 		# The leader's chosen heir first, then the eldest adult child, the spouse, then anyone else of the family
 		var chosen = character_by_id(factions[faction_id].designated_heir)
 		if honour_choice and chosen and chosen in crew:
@@ -1454,13 +1689,13 @@ func succession_outlook(faction_id: String, leader: Character = null, honour_cho
 	if heir == null:
 		return {"heir": null, "claim": 0.0, "by_blood": false, "contesters": [], "split_chance": 0.0}
 	var claim = (GameData.rule("blood_claim") if by_blood else GameData.rule("council_claim")) + heir.best_skill_value() * 3.0 \
-		+ heir.triumphs * 2.0 + factions[faction_id].renown / 10.0
+		+ heir.triumphs * 2.0 + factions[faction_id].reputation / 10.0 + factions[faction_id].effect("heir_claim")
 	var contesters = []
 	for c in crew:
 		if c == heir or not (c.post != "" or c.family):
 			continue
 		var loyalty = c.loyalty()
-		if loyalty >= 40.0 and not c.has_trait("ambitious"):
+		if loyalty >= gov.get("contest_loyalty", 40.0) and not c.has_trait("ambitious"):
 			continue
 		var theirs = c.best_skill_value() * 3.0 + c.triumphs * 2.0 + maxf(45.0 - loyalty, 0.0) + (10.0 if c.has_trait("ambitious") else 0.0)
 		if theirs > claim * 0.6:
@@ -1469,6 +1704,7 @@ func succession_outlook(faction_id: String, leader: Character = null, honour_cho
 	var chance = 0.0
 	for entry in contesters:
 		chance += entry[1] / (entry[1] + claim) * GameData.rule("split_weight")
+	chance *= factions[faction_id].effect("split_chance_mult")
 	if districts_held(faction_id) < 2:
 		chance = 0.0
 	return {"heir": heir, "claim": claim, "by_blood": by_blood, "contesters": contesters, "split_chance": clampf(chance, 0.0, 0.85)}
@@ -1486,6 +1722,20 @@ func _succession(faction_id: String, dead: Character, fate: String):
 		return
 	var outlook = succession_outlook(faction_id, dead)
 	var heir: Character = outlook["heir"]
+	# Democracy elects: the front-runner usually wins, but not always. A caretaker runs things meanwhile.
+	var gov = GameData.government(f.government)
+	if gov["heir_rule"] == "election":
+		var candidates = characters_of(faction_id).filter(func(c): return c.post != "" and c != dead)
+		if not candidates.is_empty():
+			var weights = candidates.map(func(c): return float(_skill_total(c)) + c.loyalty())
+			var pick = rng.randf() * weights.reduce(func(total, w): return total + w, 0.0)
+			for i in candidates.size():
+				pick -= weights[i]
+				if pick <= 0.0:
+					heir = candidates[i]
+					break
+		f.caretaker_until = day + int(gov.get("caretaker_days", 0))
+	f.last_succession_day = day
 	if heir == null:
 		heir = _new_captain(faction_id, Character.SKILLS[rng.randi() % Character.SKILLS.size()])
 	var was_chosen = f.designated_heir == heir.id
@@ -1515,9 +1765,33 @@ func _succession(faction_id: String, dead: Character, fate: String):
 	event.emit(text, "alert" if faction_id == player_id else "info")
 	if faction_id == player_id or player_met.has(faction_id):
 		major_event.emit("%s is dead" % dead.name, text, faction_id)
-	if not outlook["contesters"].is_empty() and rng.randf() < outlook["split_chance"]:
-		_split(faction_id, outlook["contesters"][0][0])
+	var contesters = outlook["contesters"].filter(func(entry): return entry[0] != heir)
+	var chance: float = outlook["split_chance"]
+	# An oligarchy buys off its rivals, if it can afford to: each 50 wealth (up to half the treasury) cuts the risk by a quarter
+	if gov.get("bribes", false) and not contesters.is_empty() and chance > 0.0:
+		var payments = mini(int(f.wealth * 0.5 / 50.0), 6)
+		if payments > 0:
+			f.wealth -= payments * 50.0
+			chance *= pow(0.75, payments)
+			event.emit("The %s paid %d wealth to buy off rival claimants (civil war risk now %d%%)." % [f.display_name, payments * 50, chance * 100], "alert" if faction_id == player_id else "info")
+	if not contesters.is_empty() and rng.randf() < chance:
+		if gov.get("splits", "") == "purge":
+			_purge(faction_id, contesters[0][0])
+		else:
+			_split(faction_id, contesters[0][0])
 
+
+# The Politburo doesn't split: it purges. The rival is expelled (joining a rival faction or leaving the city),
+# and everyone left on the council has seen what happens to dissenters
+func _purge(faction_id: String, rival: Character):
+	var f: Faction = factions[faction_id]
+	var text = "PURGE in the %s: %s challenged the new leadership and was expelled. The council is shaken." % [f.display_name, rival.name]
+	_defect(rival)
+	for c in characters_of(faction_id):
+		c.change_loyalty(-10.0, "purge_fear")
+	event.emit(text, "alert" if faction_id == player_id else "info")
+	if faction_id == player_id:
+		major_event.emit("Purge", text, "")
 
 # Civil war: a rival claimant breaks away with a block of districts furthest from the capital
 var next_split_id: int = 1
@@ -1534,15 +1808,20 @@ func _split(faction_id: String, claimant: Character):
 			seed = d
 	var others = owned.filter(func(d): return d != capital)
 	others.sort_custom(func(a, b): return a.center.distance_to(seed.center) < b.center.distance_to(seed.center))
-	var take = others.slice(0, clampi(int(round(owned.size() * rng.randf_range(0.3, 0.45))), 1, owned.size() - 1))
+	# How much a breakaway takes depends on the government: an autocracy breaks rarely but badly
+	var portion: Array = GameData.government(f.government).get("split_share", [0.3, 0.45])
+	var take = others.slice(0, clampi(int(round(owned.size() * rng.randf_range(portion[0], portion[1]))), 1, owned.size() - 1))
 	var surname = claimant.name.get_slice(" ", 1)
 	var id = "split_%d" % next_split_id
 	next_split_id += 1
 	var color = Color.from_hsv(fposmod(f.color.h + 0.07, 1.0), f.color.s * 0.75, f.color.v * 0.8)
 	var rebels = Faction.new(id, "%s's %s" % [surname, SPLIT_NAMES[rng.randi() % SPLIT_NAMES.size()]], color, false)
-	rebels.personality = "raider" if claimant.best_skill() == "command" else ""
 	rebels.blurb = "Broke away from the %s when %s claimed the leadership." % [f.display_name, claimant.name]
+	rebels.government = "warlord"
 	rebels.traits.load_dict(f.traits.to_dict())
+	# A fighter's breakaway leans to the gun
+	if claimant.best_skill() == "command":
+		rebels.traits.add_faction_trait_value("Militaristic", 20.0)
 	for resource_type in ["manpower", "supplies", "materials", "wealth", "arms"]:
 		var share: float = f.get(resource_type) * 0.35
 		f.set(resource_type, f.get(resource_type) - share)
@@ -1615,7 +1894,8 @@ func leader_busy(c: Character) -> bool:
 	for v in ventures:
 		if v.leader_id == c.id:
 			return true
-	return false
+	# On a standing task (even one waiting to resume), or still committed after stopping one
+	return task_of(c) != null or c.committed_until > day
 
 func available_leaders(faction_id: String) -> Array:
 	return characters_of(faction_id).filter(func(c): return not c.is_wounded(day) and not leader_busy(c))
@@ -1628,10 +1908,10 @@ func best_leader(faction_id: String, skill: String) -> Character:
 			best = c
 	return best
 
-# How many captains a faction can keep: more with territory and renown
+# How many captains a faction can keep: more with territory and reputation
 func captain_cap(faction_id: String) -> int:
 	return mini(int(GameData.rule("captain_max")), int(GameData.rule("captain_base")) + districts_held(faction_id) / int(GameData.rule("captain_per_districts")) \
-		+ int(factions[faction_id].renown / GameData.rule("captain_per_renown")))
+		+ int(factions[faction_id].reputation / GameData.rule("captain_per_renown")))
 
 func _new_captain(faction_id: String, specialty: String) -> Character:
 	var names = GameData.names()
@@ -1648,7 +1928,7 @@ func _new_captain(faction_id: String, specialty: String) -> Character:
 	for s in Character.SKILLS:
 		c.skills[s] = rng.randi_range(1, 4)
 	# Renown draws better people: up to +2 on their specialty
-	c.skills[specialty] = mini(10, rng.randi_range(5, 8) + mini(2, int(factions[faction_id].renown / 40.0)))
+	c.skills[specialty] = mini(10, rng.randi_range(5, 8) + mini(2, int(factions[faction_id].reputation / 40.0)))
 	_give_personality(c)
 	characters.append(c)
 	return c
@@ -1707,7 +1987,11 @@ func buildings_active(district: District) -> bool:
 func building_slots(district: District) -> int:
 	if district.owner_id() == "":
 		return 0
-	return int(GameData.rule("building_slots").get(district.get_control_status(), 0))
+	var slots = int(GameData.rule("building_slots").get(district.get_control_status(), 0))
+	# A City Again: Secured districts take one more building
+	if district.get_control_status() == "secured" and factions.has(district.owner_id()):
+		slots += int(factions[district.owner_id()].effect("secured_slots"))
+	return slots
 
 func constructions_at(district: District) -> Array:
 	var found = []
@@ -1723,8 +2007,8 @@ func crew_cap(faction_id: String) -> int:
 		if d.owner_id() == faction_id and buildings_active(d):
 			cap += int(d.building_effect("crew_cap"))
 	# Renowned factions draw volunteers
-	cap += int(factions[faction_id].renown / GameData.rule("renown_per_crew"))
-	return cap
+	cap += int(factions[faction_id].reputation / GameData.rule("renown_per_crew"))
+	return int(cap * factions[faction_id].effect("crew_cap_mult"))
 
 # Returns "" if the building can be started here, otherwise why not
 func check_build(faction_id: String, building_id: String, district: District) -> String:
@@ -1758,7 +2042,10 @@ func start_construction(faction_id: String, building_id: String, district: Distr
 	var def = GameData.building(building_id)
 	f.pay(def["cost"])
 	f.manpower -= def["crew"]
-	constructions.append(Construction.new(building_id, faction_id, district, int(def["crew"]), int(def["days"])))
+	# Some ambitions speed a building up (Walls and Watches: Watchtowers in half the time)
+	var days = int(ceil(def["days"] * f.effect(building_id + "_build_mult")))
+	constructions.append(Construction.new(building_id, faction_id, district, int(def["crew"]), days))
+	factions[faction_id].lean["home"] += 1.0
 	if faction_id == player_id:
 		event.emit("Started building a %s in %s: ready in %d days." % [def["label"], district.district_name, def["days"]], "info")
 	return ""
@@ -1790,7 +2077,7 @@ func district_food(d: District) -> float:
 	var food = mult * (0.2 + d.development * 0.3) * (1.0 - d.ruin_level * 0.5) + d.food_yield
 	if buildings_active(d):
 		food += d.building_effect("supplies_daily")
-	return food
+	return food * factions[d.owner_id()].effect("food_mult") if factions.has(d.owner_id()) else food
 
 # The food that drives a district's growth: its own, plus a share of what the owner's
 # neighbouring districts grow (food travels a little way)
@@ -1818,7 +2105,7 @@ func district_income(d: District) -> Dictionary:
 	var owner: Faction = factions[d.owner_id()]
 	income["supplies"] = district_food(d)
 	income["wealth"] = mult * d.population * (GameData.rule("tax_per_pop") + d.development * GameData.rule("tax_per_pop_development")) \
-		* owner.traits.effect("wealth_income_mult")
+		* owner.effect("wealth_income_mult")
 	var recruit_mult = 1.0
 	if buildings_active(d):
 		income["materials"] += d.building_effect("materials_daily")
@@ -1833,6 +2120,10 @@ func district_income(d: District) -> Dictionary:
 func admin_upkeep(faction_id: String) -> float:
 	# The first few districts run themselves; beyond that, costs climb faster than territory
 	return GameData.rule("admin_upkeep_per_district") * pow(maxf(districts_held(faction_id) - GameData.rule("admin_free_districts"), 0.0), GameData.rule("admin_upkeep_exponent"))
+
+# Holding more land also wears on materials: patrols, barricades and repairs across a wider front
+func admin_materials(faction_id: String) -> float:
+	return GameData.rule("admin_materials_per_district") * pow(maxf(districts_held(faction_id) - GameData.rule("admin_free_districts"), 0.0), GameData.rule("admin_upkeep_exponent"))
 
 # Daily running costs, itemised: {"supplies": [[label, amount]], "wealth": [...], "materials": [...]}.
 # Manpower and population eat food, buildings cost upkeep, territory costs administration, hoards leak
@@ -1856,6 +2147,7 @@ func upkeep_breakdown(faction_id: String) -> Dictionary:
 	parts["wealth"].append(["Administration (%d districts)" % districts_held(faction_id), admin_upkeep(faction_id)])
 	parts["wealth"].append(["Council wages (%d seats)" % council_size(faction_id), council_size(faction_id) * council_wage(faction_id)])
 	parts["wealth"].append(["Theft and graft (over %d)" % GameData.rule("wealth_safe_hoard"), maxf(f.wealth - GameData.rule("wealth_safe_hoard"), 0.0) * GameData.rule("hoard_loss_rate")])
+	parts["materials"].append(["Administration (%d districts)" % districts_held(faction_id), admin_materials(faction_id)])
 	parts["materials"].append(["Building wear (%d buildings)" % building_count, building_count * GameData.rule("building_materials_upkeep")])
 	parts["materials"].append(["Theft and graft (over %d)" % GameData.rule("materials_safe_hoard"), maxf(f.materials - GameData.rule("materials_safe_hoard"), 0.0) * GameData.rule("hoard_loss_rate")])
 	for resource_type in building_costs:
@@ -1880,10 +2172,14 @@ func crew_cap_breakdown(faction_id: String) -> Array:
 			from_buildings += int(d.building_effect("crew_cap"))
 	if from_buildings > 0:
 		parts.append(["Hostels", from_buildings])
-	var from_renown = int(factions[faction_id].renown / GameData.rule("renown_per_crew"))
+	var from_renown = int(factions[faction_id].reputation / GameData.rule("renown_per_crew"))
 	if from_renown > 0:
-		parts.append(["Renown", from_renown])
+		parts.append(["Reputation", from_renown])
+	var extra = crew_cap(faction_id) - parts.reduce(func(total, part): return total + part[1], 0)
+	if extra != 0:
+		parts.append(["Ambitions", extra])
 	return parts
+
 # Daily totals for the UI: {"supplies" (food), "materials", "wealth": {"income", "upkeep"}, "manpower": new per day,
 # "trade": wealth from trade agreements, "tribute": {"supplies", "wealth"} (negative when paying)}
 func daily_economy(faction_id: String) -> Dictionary:
@@ -1923,6 +2219,8 @@ func daily_economy(faction_id: String) -> Dictionary:
 
 func advance_day():
 	day += 1
+	for f in factions.values():
+		f.effect_cache.clear()
 	for d in districts:
 		_simulate_district(d)
 	_simulate_relations()
@@ -1950,8 +2248,13 @@ func advance_day():
 		if f.ai and factions.has(f.id):
 			f.ai.think(self)
 	_check_eliminations()
-	_check_ambitions()
+	_check_deeds()
+	_update_ambitions()
+	_update_tasks()
 	_check_recruitment()
+	for fid in factions:
+		for side in factions[fid].lean:
+			factions[fid].lean[side] *= 1.0 - 1.0 / 90.0
 	_update_loyalty()
 	_check_first_contacts()
 	_life_cycle()
@@ -1969,7 +2272,7 @@ func _simulate_district(d: District):
 	if claimants >= 2:
 		d.grievance += 0.35
 	if owner_faction:
-		d.grievance += owner_faction.traits.effect("owned_daily_grievance")
+		d.grievance += owner_faction.effect("owned_daily_grievance")
 	if active:
 		d.grievance += d.building_effect("grievance_daily")
 	d.grievance = clampf(d.grievance, 0.0, 100.0)
@@ -2095,7 +2398,7 @@ func to_save() -> Dictionary:
 		"version": SAVE_VERSION, "day": day, "player_id": player_id,
 		"rng_seed": str(rng.seed), "rng_state": str(rng.state),
 		"factions": [], "relations": [], "districts": [], "ventures": [], "constructions": [], "missions": [],
-		"proposals": proposals.duplicate(true), "player_defeated": player_defeated,
+		"tasks": tasks.map(func(t): return t.to_dict()), "proposals": proposals.duplicate(true), "demand_warned": demand_warned.duplicate(), "player_defeated": player_defeated,
 		"characters": characters.map(func(c): return c.to_dict()), "next_character_id": next_character_id, "departed": departed.duplicate(true), "player_met": player_met.duplicate(), "next_split_id": next_split_id, "graveyard": graveyard.map(func(c): return c.to_dict()),
 	}
 	for f in factions.values():
@@ -2131,7 +2434,10 @@ func _load(data: Dictionary):
 		constructions.append(Construction.from_dict(cd, districts))
 	for md in data["missions"]:
 		missions.append(DiplomaticMission.from_dict(md))
+	for td in data["tasks"]:
+		tasks.append(StandingTask.from_dict(td))
 	proposals = data["proposals"]
+	demand_warned = data["demand_warned"]
 	player_defeated = data["player_defeated"]
 	for cd in data["characters"]:
 		characters.append(Character.from_dict(cd))
@@ -2163,13 +2469,17 @@ static func load_game(path: String = SAVE_PATH) -> CityMap:
 
 # --- Ambitions ------------------------------------------------------------------------
 
-# What an ambition's condition can measure (see data/ambitions.json)
-const AMBITION_CONDITIONS = ["districts_held", "secured_districts", "buildings_owned", "building_type", "trade_agreements",
+# What a deed's condition can measure (see data/deeds.json)
+const DEED_CONDITIONS = ["districts_held", "secured_districts", "buildings_owned", "building_type", "trade_agreements",
 	"alliances", "vassals", "crew_total", "traits_active", "population", "districts_conquered", "wars_won"]
 
-# Progress toward an ambition as [current, target]
-func ambition_progress(faction_id: String, ambition_id: String) -> Array:
-	var condition: Dictionary = GameData.ambitions()[ambition_id]["condition"]
+# Progress toward a deed as [current, target]
+func deed_progress(faction_id: String, deed_id: String) -> Array:
+	var condition: Dictionary = GameData.deeds()[deed_id]["condition"]
+	return [measure(faction_id, condition), int(condition["amount"])]
+
+# How much of something a faction has, for deeds and ambition requirements ("districts_held", ...)
+func measure(faction_id: String, condition: Dictionary) -> int:
 	var f: Faction = factions[faction_id]
 	var current = 0
 	match condition["type"]:
@@ -2201,28 +2511,501 @@ func ambition_progress(faction_id: String, ambition_id: String) -> Array:
 			current = f.traits.get_active_traits().size()
 		"districts_conquered", "wars_won":
 			current = int(f.stats[condition["type"]])
-	return [current, int(condition["amount"])]
+	return current
 
-# Every faction pursues the same ambitions; achieving one earns renown
-func _check_ambitions():
+# Deeds: the same milestones for every faction; each one done earns renown (and reputation)
+func _check_deeds():
 	for f in factions.values():
-		for id in GameData.ambitions():
-			if id in f.ambitions_done:
+		for id in GameData.deeds():
+			if id in f.deeds_done:
 				continue
-			var progress = ambition_progress(f.id, id)
+			var progress = deed_progress(f.id, id)
 			if progress[0] < progress[1]:
 				continue
-			var ambition = GameData.ambitions()[id]
-			f.ambitions_done.append(id)
-			f.renown += ambition["renown"]
+			var deed = GameData.deeds()[id]
+			f.deeds_done.append(id)
+			f.add_renown(deed["renown"])
 			if f.id == player_id:
-				event.emit("Ambition achieved: %s. %s (+%d renown)" % [ambition["label"], ambition["description"], ambition["renown"]], "good")
+				event.emit("Deed done: %s. %s (+%d renown)" % [deed["label"], deed["description"], deed["renown"]], "good")
 			else:
-				event.emit("The %s achieved \"%s\" (+%d renown)." % [f.display_name, ambition["label"], ambition["renown"]], "info")
+				event.emit("The %s: \"%s\" (+%d renown)." % [f.display_name, deed["label"], deed["renown"]], "info")
+
+# --- Standing tasks (doc 13) --------------------------------------------------------------
+
+# Routine work that, on your own land, is done as a councillor's standing task
+func is_task(faction_id: String, venture_id: String, d: District) -> bool:
+	return GameData.venture(venture_id).get("task", false) and d.owner_id() == faction_id
+
+func task_of(c: Character) -> StandingTask:
+	for t in tasks:
+		if t.character_id == c.id:
+			return t
+	return null
+
+func task_at(faction_id: String, venture_id: String, d: District) -> StandingTask:
+	for t in tasks:
+		if t.faction_id == faction_id and t.venture_id == venture_id and t.district_id == d.id:
+			return t
+	return null
+
+# Councillors free to take a task, best at the skill first
+func free_councillors(faction_id: String, skill: String) -> Array:
+	var free = available_leaders(faction_id).filter(func(c): return c.post != "")
+	free.sort_custom(func(a, b): return a.skills[skill] > b.skills[skill])
+	return free
+
+# Why nobody on the council can take a task right now
+func council_availability(faction_id: String) -> String:
+	var seated = characters_of(faction_id).filter(func(c): return c.post != "")
+	if seated.is_empty():
+		return "Nobody sits on your council: seat captains in the Council window to give them tasks"
+	var parts = []
+	for c in seated:
+		var t = task_of(c)
+		if t:
+			parts.append("%s %s %s" % [c.name, GameData.venture(t.venture_id)["task_label"].to_lower(), districts[t.district_id].district_name])
+		elif c.committed_until > day:
+			parts.append("%s free in %d days" % [c.name, c.committed_until - day])
+		else:
+			var why = unavailable_reason(c)
+			if why != "":
+				parts.append("%s %s" % [c.name, why])
+	return "No councillor is free: " + ", ".join(parts)
+
+# "" if this councillor (-2: the best free one) can take this task here, otherwise why not
+func check_task(faction_id: String, venture_id: String, d: District, character_id: int = -2, crew: int = -1) -> String:
+	if not is_task(faction_id, venture_id, d):
+		return "Only on your own land"
+	if task_at(faction_id, venture_id, d):
+		return "Already under way here"
+	var done = task_done_reason(faction_id, venture_id, d)
+	if done != "":
+		return "Nothing to do: %s" % done
+	var c: Character = null
+	if character_id == -2:
+		var free = free_councillors(faction_id, GameData.venture(venture_id)["skill"])
+		c = free[0] if not free.is_empty() else null
+		if c == null:
+			return council_availability(faction_id)
+	else:
+		c = character_by_id(character_id)
+		if c == null or c.faction_id != faction_id or c.post == "":
+			return "Only a councillor can take a standing task"
+		if leader_busy(c) or c.is_wounded(day):
+			return "%s isn't free: %s" % [c.name, unavailable_reason(c) if unavailable_reason(c) != "" else "committed for %d more days" % (c.committed_until - day)]
+	var size = crew if crew > 0 else recommended_plan(faction_id, venture_id, d, c)["crew"]
+	return check_launch(faction_id, venture_id, d, c.id, size, 0, true)
+
+# Why a task here would have nothing left to do ("" while there's work): the district's own state
+func task_done_reason(faction_id: String, venture_id: String, d: District) -> String:
+	var def = GameData.venture(venture_id)
+	if def["target"] == "scavenge" and d.ruin_level < 0.1:
+		return "the ruins are stripped bare"
+	if d.grievance < def.get("min_grievance", 0.0):
+		return "the district is calm"
+	match def.get("needs", ""):
+		"food":
+			if d.food_yield >= GameData.rule("food_source_cap") - 0.001:
+				return "every food source is worked"
+		"control":
+			if d.share(faction_id) >= 95.0:
+				return "it's fully under your control"
+		"development":
+			if d.development >= 0.99:
+				return "it's fully rebuilt"
+		"arms":
+			if factions[faction_id].arms >= GameData.rule("arms_cap"):
+				return "the armoury is full"
+		"threat":
+			if not district_threatened(faction_id, d):
+				return "the threat has passed"
+	return ""
+
+# The councillor goes to the district and starts at once; they're committed for two runs
+func assign_task(faction_id: String, venture_id: String, d: District, character_id: int = -2, crew: int = -1) -> String:
+	var err = check_task(faction_id, venture_id, d, character_id, crew)
+	if err != "":
+		return err
+	var def = GameData.venture(venture_id)
+	var c: Character = character_by_id(character_id) if character_id != -2 else free_councillors(faction_id, def["skill"])[0]
+	var size = crew if crew > 0 else recommended_plan(faction_id, venture_id, d, c)["crew"]
+	var runs = int(GameData.rule("task_commit_runs"))
+	var t = StandingTask.new(venture_id, faction_id, c.id, d.id, size, day, day + runs * venture_days(venture_id, c, d))
+	launch_venture(faction_id, venture_id, d, c.id, size, 0, true)
+	t.runs = 1
+	tasks.append(t)
+	if faction_id == player_id:
+		event.emit("%s starts %s %s with %d crew, until %s. Committed for %d days." % [c.name, def["task_label"].to_lower(), d.district_name,
+			size, task_goal(def), t.committed_until - day], "good")
+	return ""
+
+# What ends a task, in words, for the log and the planner
+func task_goal(def: Dictionary) -> String:
+	if def["target"] == "scavenge":
+		return "the ruins are stripped"
+	if def.has("min_grievance"):
+		return "the district is calm"
+	return {"food": "every food source is worked", "control": "it's fully under your control", "development": "it's fully rebuilt",
+		"arms": "the armoury is full", "threat": "the threat passes"}.get(def.get("needs", ""), "the job is done")
+
+# The player pulls a councillor off: the run under way finishes, then the task ends
+func stop_task(t: StandingTask):
+	var running = ventures.any(func(v): return v.task and v.leader_id == t.character_id)
+	if running:
+		t.stopping = true
+	else:
+		_end_task(t, "stopped", false)
+
+# After each run (and daily while paused): carry on, wait, or finish
+func _continue_task(t: StandingTask):
+	var f: Faction = factions.get(t.faction_id)
+	var c = character_by_id(t.character_id)
+	var d: District = districts[t.district_id]
+	if f == null or c == null or c.faction_id != t.faction_id:
+		_end_task(t, "%s is gone" % (c.name if c else "the councillor"), true)
+		return
+	if c.post == "":
+		_end_task(t, "%s left the council" % c.name, true)
+		return
+	if d.owner_id() != t.faction_id:
+		_end_task(t, "%s was lost" % d.district_name, true)
+		return
+	if t.stopping:
+		_end_task(t, "stopped", false)
+		return
+	var done = task_done_reason(t.faction_id, t.venture_id, d)
+	if done != "":
+		_end_task(t, done, true)
+		return
+	if c.is_wounded(day):
+		t.paused = "wounded"
+		return
+	var err = check_launch(t.faction_id, t.venture_id, d, c.id, t.crew, 0, true)
+	if err != "":
+		if t.paused != err and t.faction_id == player_id:
+			event.emit("%s's %s in %s is waiting: %s." % [c.name, GameData.venture(t.venture_id)["label"], d.district_name, err.to_lower()], "alert")
+		t.paused = err
+		return
+	t.paused = ""
+	launch_venture(t.faction_id, t.venture_id, d, c.id, t.crew, 0, true)
+	t.runs += 1
+
+# The task ends: done (the councillor is free at once) or stopped (free once the commitment has passed)
+func _end_task(t: StandingTask, why: String, natural: bool):
+	tasks.erase(t)
+	var c = character_by_id(t.character_id)
+	if c and not natural:
+		c.committed_until = maxi(c.committed_until, t.committed_until)
+	if t.faction_id != player_id:
+		return
+	var def = GameData.venture(t.venture_id)
+	var who = c.name if c else "The councillor"
+	var text = "%s has finished %s %s: %s (%d runs%s)." % [who, def["task_label"].to_lower(), districts[t.district_id].district_name, why, t.runs, _gains_text(t.gains)]
+	if natural:
+		text += " %s is free for a new task." % who
+	elif c and c.committed_until > day:
+		text += " %s is free in %d days." % [who, c.committed_until - day]
+	event.emit(text, "good" if natural else "info")
+
+func _gains_text(gains: Dictionary) -> String:
+	var parts = []
+	for key in gains:
+		if int(gains[key]) != 0:
+			parts.append("%+d %s" % [gains[key], "food" if key == "supplies" else key])
+	return (", " + ", ".join(parts)) if not parts.is_empty() else ""
+
+# Daily: paused tasks try again; every 30 days, one digest line per task of yours
+func _update_tasks():
+	for t in tasks.duplicate():
+		if t.paused != "":
+			_continue_task(t)
+	if day % int(GameData.rule("task_digest_days")) != 0:
+		return
+	for t in tasks:
+		if t.faction_id != player_id:
+			continue
+		var c = character_by_id(t.character_id)
+		var d: District = districts[t.district_id]
+		event.emit("%s, %s %s: %d runs this month%s. %s%s" % [c.name if c else "?", GameData.venture(t.venture_id)["task_label"].to_lower(), d.district_name,
+			t.digest_runs, _gains_text(t.gains), task_progress_text(t), ("  Waiting: " + t.paused) if t.paused != "" else ""], "info")
+		t.gains = {}
+		t.digest_runs = 0
+
+# Where a task stands against its end, e.g. "Ruins 31% (done under 10%)"
+func task_progress_text(t: StandingTask) -> String:
+	return task_stat_text(t.faction_id, t.venture_id, districts[t.district_id])
+
+# The stat a task works on in a district, against its end (also shown on the map when picking a district)
+func task_stat_text(faction_id: String, venture_id: String, d: District) -> String:
+	var def = GameData.venture(venture_id)
+	if def["target"] == "scavenge":
+		return "Ruins %d%% (done under 10%%)" % (d.ruin_level * 100)
+	if def.has("min_grievance"):
+		return "Grievance %d (done under %d)" % [d.grievance, def["min_grievance"]]
+	match def.get("needs", ""):
+		"food":
+			return "Food sources %.2f of %.1f" % [d.food_yield, GameData.rule("food_source_cap")]
+		"control":
+			return "Control %d of 95" % d.share(faction_id)
+		"development":
+			return "Development %d%% of 100%%" % (d.development * 100)
+		"arms":
+			return "Arms %d of %d" % [factions[faction_id].arms, GameData.rule("arms_cap")]
+		"threat":
+			return "Guarding while the threat lasts"
+	return ""
+
+# --- National Ambitions (S4, doc 12) --------------------------------------------------------
+
+# What an ambition's requirements can check: everything a deed can count, plus these
+const AMBITION_CONDITIONS = ["districts_held", "secured_districts", "buildings_owned", "building_type", "trade_agreements",
+	"alliances", "vassals", "crew_total", "traits_active", "population", "districts_conquered", "wars_won",
+	"trait", "treaties", "raided_or_war", "food_short", "materials_below", "council_loyalty_below", "split_risk",
+	"leader_skill", "leader_trait", "ambitions_done", "ambition_done", "recent_succession", "grievance_below", "at_peace"]
+
+# Whether one requirement holds, and how to say it: [met, "Militaristic", "2 treaties (you have 1)"]
+func condition_status(faction_id: String, condition: Dictionary) -> Array:
+	var f: Faction = factions[faction_id]
+	var leader = leader_of(faction_id)
+	match condition["type"]:
+		"trait":
+			return [f.traits.is_active(condition["trait"]), condition["trait"]]
+		"treaties":
+			var count = 0
+			for fid in factions:
+				if fid != faction_id:
+					var r = relation(faction_id, fid)
+					count += 1 if (r.trade or r.pact or r.alliance or r.overlord != "") else 0
+			return [count >= int(condition["amount"]), "%d treaties (you have %d)" % [condition["amount"], count]]
+		"raided_or_war":
+			var hit = at_war_with_anyone(faction_id)
+			for fid in factions:
+				if fid != faction_id and relation(faction_id, fid).last_raid[fid] > 0 and day - relation(faction_id, fid).last_raid[fid] <= int(condition["days"]):
+					hit = true
+			return [hit, "raided or at war in the last %d days" % condition["days"]]
+		"food_short":
+			var econ = daily_economy(faction_id)["supplies"]
+			var net: float = econ["income"] - econ["upkeep"]
+			return [net < condition["below"], "food short (under %+.1f a day; you make %+.2f)" % [condition["below"], net]]
+		"materials_below":
+			return [f.materials < condition["amount"], "materials under %d (you have %d)" % [condition["amount"], f.materials]]
+		"council_loyalty_below":
+			var low = characters_of(faction_id).filter(func(c): return c.post != "" and c.loyalty() < condition["amount"])
+			return [not low.is_empty(), "a councillor under %d loyalty" % condition["amount"]]
+		"split_risk":
+			var risk: float = succession_outlook(faction_id)["split_chance"]
+			return [risk >= condition["amount"], "civil war risk %d%%+ (now %d%%)" % [condition["amount"] * 100, risk * 100]]
+		"leader_skill":
+			var value = int(leader.skills[condition["skill"]]) if leader else 0
+			return [value >= int(condition["amount"]), "a leader with %s %d+ (yours: %d)" % [String(condition["skill"]).capitalize(), condition["amount"], value]]
+		"leader_trait":
+			var label: String = GameData.character_trait(condition["trait"])["label"]
+			return [leader != null and leader.has_trait(condition["trait"]), "a %s leader" % label]
+		"ambitions_done":
+			return [f.ambitions_done.size() >= int(condition["amount"]), "%d ambition%s achieved (you have %d)" % [condition["amount"], "" if int(condition["amount"]) == 1 else "s", f.ambitions_done.size()]]
+		"ambition_done":
+			return [condition["ambition"] in f.ambitions_done, "%s achieved" % GameData.national_ambition(condition["ambition"])["label"]]
+		"recent_succession":
+			var since = day - f.last_succession_day
+			return [since <= int(condition["days"]), "a leader who died in the last %d days" % condition["days"]]
+		"grievance_below":
+			var total = 0.0
+			var count = 0
+			for d in districts:
+				if d.owner_id() == faction_id:
+					total += d.grievance
+					count += 1
+			var average = total / maxf(1.0, count)
+			return [average < condition["amount"], "average grievance under %d (now %d)" % [condition["amount"], average]]
+		"at_peace":
+			return [not at_war_with_anyone(faction_id), "at peace"]
+	var have = measure(faction_id, condition)
+	var names = {"districts_held": "districts", "secured_districts": "Secured districts", "buildings_owned": "buildings", "trade_agreements": "trade agreements",
+		"alliances": "alliances", "vassals": "vassals", "building_type": GameData.building(condition.get("building", "market"))["label"] + "s"}
+	return [have >= int(condition["amount"]), "%d %s (you have %d)" % [condition["amount"], names.get(condition["type"], condition["type"]), have]]
+
+# Every way of qualifying for an ambition, each a list of [met, text]: any one fully met option will do
+func ambition_options(faction_id: String, ambition_id: String) -> Array:
+	var options = []
+	for option in GameData.national_ambition(ambition_id)["requires"]:
+		options.append(option.map(func(condition): return condition_status(faction_id, condition)))
+	return options
+
+func ambition_qualifies(faction_id: String, ambition_id: String) -> bool:
+	return ambition_options(faction_id, ambition_id).any(func(option): return option.all(func(s): return s[0]))
+
+# How long an ambition takes this faction
+func ambition_days(faction_id: String, ambition_id: String) -> int:
+	return int(ceil(GameData.national_ambition(ambition_id)["days"] * factions[faction_id].effect("ambition_days_mult")))
+
+# "" if the faction can start this ambition now, otherwise why not (and what to do about it)
+func check_ambition(faction_id: String, ambition_id: String) -> String:
+	var f: Faction = factions[faction_id]
+	var def = GameData.national_ambition(ambition_id)
+	if ambition_id in f.ambitions_done:
+		return "Already achieved"
+	if ambition_id in f.ambitions_closed:
+		return "Closed for good by an ambition you chose"
+	if f.ambition != "":
+		return "You're already pursuing %s (%d days left)" % [GameData.national_ambition(f.ambition)["label"], f.ambition_days_left]
+	if not f.can_afford(def["cost"]):
+		return f.shortfall(def["cost"])
+	if not ambition_qualifies(faction_id, ambition_id):
+		var options = ambition_options(faction_id, ambition_id).map(func(option): return " and ".join(option.filter(func(s): return not s[0]).map(func(s): return s[1])))
+		return "Needs " + " or ".join(options)
+	return ""
+
+func start_ambition(faction_id: String, ambition_id: String) -> String:
+	var err = check_ambition(faction_id, ambition_id)
+	if err != "":
+		return err
+	var f: Faction = factions[faction_id]
+	var def = GameData.national_ambition(ambition_id)
+	f.pay(def["cost"])
+	f.ambition = ambition_id
+	f.ambition_days_left = ambition_days(faction_id, ambition_id)
+	f.lean["home"] += 1.0
+	# Choosing one road closes the other for good
+	for other in def.get("closes", []):
+		if other not in f.ambitions_closed:
+			f.ambitions_closed.append(other)
+	if faction_id == player_id:
+		event.emit("You set out on %s: %d days. %s" % [def["label"], f.ambition_days_left, def["bonus_text"]], "good")
+	elif player_met.has(faction_id):
+		event.emit("The %s set out on %s." % [f.display_name, def["label"]], "info")
+	return ""
+
+# An ambition's condition while running was broken (e.g. a raid during Welfare for All): it fails, the renown is gone
+func fail_ambition(faction_id: String, why: String):
+	var f: Faction = factions[faction_id]
+	if f.ambition == "":
+		return
+	var label: String = GameData.national_ambition(f.ambition)["label"]
+	f.ambition = ""
+	f.ambition_days_left = 0
+	if faction_id == player_id:
+		event.emit("%s has failed: %s. The renown spent on it is lost." % [label, why], "bad")
+	elif player_met.has(faction_id):
+		event.emit("The %s abandoned %s (%s)." % [f.display_name, label, why], "info")
+
+# Daily: ambitions under way count down; a finished one's bonus lasts for good
+func _update_ambitions():
+	for f in factions.values():
+		if f.ambition == "":
+			continue
+		f.ambition_days_left -= 1
+		if f.ambition_days_left > 0:
+			continue
+		var id = f.ambition
+		var def = GameData.national_ambition(id)
+		f.ambition = ""
+		f.ambitions_done.append(id)
+		f.effect_cache.clear()
+		var loyalty: float = def["bonus"].get("council_loyalty", 0.0)
+		if loyalty != 0.0:
+			for c in characters_of(f.id):
+				if c.post != "":
+					c.change_loyalty(loyalty, "sworn_loyalty")
+		if f.id == player_id:
+			major_event.emit(def["label"], "Your crew has achieved %s. From now on: %s." % [def["label"], def["bonus_text"]], "")
+		elif player_met.has(f.id):
+			event.emit("The %s achieved %s: %s." % [f.display_name, def["label"], def["bonus_text"]], "info")
+
+# --- Government reforms (S4b, doc 12) --------------------------------------------------------
+
+const REFORM_LOCK_DAYS = 720
+const REFORM_GRIEVANCE = 10.0
+
+# Governments a faction could reform into from where it stands: a gang can only become a Warlord crew;
+# anyone past that can aim for any of the others
+func reform_options(faction_id: String) -> Array:
+	var current: String = factions[faction_id].government
+	if current == "gang":
+		return ["warlord"]
+	return GameData.governments().keys().filter(func(id): return id != current and id not in ["gang", "warlord"])
+
+func reform_requirements(faction_id: String, gov_id: String) -> Array:
+	var options = []
+	for option in GameData.government(gov_id)["reform"]["requires"]:
+		options.append(option.map(func(condition): return condition_status(faction_id, condition)))
+	return options
+
+# What it costs this faction (a Democracy argues everything twice over)
+func reform_cost(faction_id: String, gov_id: String) -> Dictionary:
+	var cost: Dictionary = GameData.government(gov_id)["reform"]["cost"].duplicate()
+	var mult = factions[faction_id].effect("reform_cost_mult")
+	for resource_type in cost:
+		cost[resource_type] = ceilf(cost[resource_type] * mult)
+	return cost
+
+# Where the council stands, by their natures: {"for": [characters], "against": [characters]}
+func council_stance(faction_id: String, gov_id: String) -> Dictionary:
+	var reform: Dictionary = GameData.government(gov_id)["reform"]
+	var stance = {"for": [], "against": []}
+	for c in characters_of(faction_id):
+		if c.post == "":
+			continue
+		if reform.get("opposers", []).any(func(t): return c.has_trait(t)):
+			stance["against"].append(c)
+		elif reform.get("backers", []).any(func(t): return c.has_trait(t)):
+			stance["for"].append(c)
+	return stance
+
+# "" if the faction can take this reform now, otherwise why not
+func check_reform(faction_id: String, gov_id: String) -> String:
+	var f: Faction = factions[faction_id]
+	if gov_id not in reform_options(faction_id):
+		return "Not a step you can take from %s" % GameData.government(f.government)["label"]
+	if f.reform_locked_until > day:
+		return "Too soon after the last reform: %d more days" % (f.reform_locked_until - day)
+	var options = reform_requirements(faction_id, gov_id)
+	if not options.any(func(option): return option.all(func(s): return s[0])):
+		return "Needs " + " or ".join(options.map(func(option): return " and ".join(option.filter(func(s): return not s[0]).map(func(s): return s[1]))))
+	var cost = reform_cost(faction_id, gov_id)
+	if not f.can_afford(cost):
+		return f.shortfall(cost)
+	# Where the council votes, a majority against blocks it
+	if GameData.government(f.government).get("votes", false):
+		var stance = council_stance(faction_id, gov_id)
+		if stance["against"].size() > stance["for"].size():
+			return "The council votes it down (%d against, %d for)" % [stance["against"].size(), stance["for"].size()]
+	return ""
+
+func take_reform(faction_id: String, gov_id: String) -> String:
+	var err = check_reform(faction_id, gov_id)
+	if err != "":
+		return err
+	var f: Faction = factions[faction_id]
+	var old_label: String = GameData.government(f.government)["label"]
+	var gov = GameData.government(gov_id)
+	var stance = council_stance(faction_id, gov_id)
+	f.pay(reform_cost(faction_id, gov_id))
+	f.government = gov_id
+	f.reform_locked_until = day + REFORM_LOCK_DAYS
+	f.effect_cache.clear()
+	f.lean["home"] += 1.0
+	if gov["heir_rule"] != "blood":
+		f.designated_heir = -1
+	# The transition: an unsettled city, and a council that remembers who got their way
+	for d in districts:
+		if d.owner_id() == faction_id:
+			d.grievance = clampf(d.grievance + REFORM_GRIEVANCE, 0.0, 100.0)
+	for c in stance["against"]:
+		c.change_loyalty(-10.0, "reform_opposed")
+	for c in stance["for"]:
+		c.change_loyalty(5.0, "reform_backed")
+	var text = "The %s are no longer a %s: they are now a %s. %s" % [f.display_name, old_label, gov["label"], gov["succession"]]
+	if faction_id == player_id:
+		major_event.emit(gov["reform"]["label"], "%s\n\nThe change unsettles your districts (grievance +%d)%s." % [text, REFORM_GRIEVANCE,
+			(", and %s resent%s being overruled" % [", ".join(stance["against"].map(func(c): return c.name)), "s" if stance["against"].size() == 1 else ""]) if not stance["against"].is_empty() else ""], "")
+		event.emit(text, "good")
+	else:
+		event.emit(text, "info")
+	return ""
 
 # Daily wealth paid to each council member: a bigger faction's council expects more
 func council_wage(faction_id: String) -> float:
-	return GameData.rule("council_wage") + GameData.rule("council_wage_per_district") * districts_held(faction_id)
+	return (GameData.rule("council_wage") + GameData.rule("council_wage_per_district") * districts_held(faction_id)) * factions[faction_id].effect("council_wage_mult")
 
 # The first time a faction's land touches the player's, say who they are
 func _check_first_contacts():

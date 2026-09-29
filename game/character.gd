@@ -14,6 +14,8 @@ var age: int
 var skills: Dictionary = {"command": 0, "cunning": 0, "diplomacy": 0, "stewardship": 0}
 # Unavailable until this day while recovering from a wound
 var wounded_until: int = 0
+# A councillor who worked a standing task takes no new work before this day (doc 13: the commitment)
+var committed_until: int = 0
 var ventures_led: int = 0
 var triumphs: int = 0
 var wounds: int = 0
@@ -121,7 +123,7 @@ func triumph_bonus() -> float:
 
 func to_dict() -> Dictionary:
 	return {"id": id, "faction": faction_id, "name": name, "age": age, "skills": skills.duplicate(),
-		"wounded_until": wounded_until, "ventures_led": ventures_led, "triumphs": triumphs, "wounds": wounds,
+		"wounded_until": wounded_until, "committed_until": committed_until, "ventures_led": ventures_led, "triumphs": triumphs, "wounds": wounds,
 		"post": post, "traits": traits.duplicate(), "loyalty_mods": loyalty_mods.duplicate(true), "restless_warned": restless_warned,
 		"sex": sex, "is_leader": is_leader, "family": family, "dynasty": dynasty, "parent_ids": parent_ids.duplicate(), "spouse_id": spouse_id,
 		"respect": respect, "respect_label": respect_label, "ruling_since": ruling_since,
@@ -131,6 +133,7 @@ static func from_dict(data: Dictionary) -> Character:
 	var c = Character.new(int(data["id"]), data["faction"], data["name"], int(data["age"]))
 	c.skills = data["skills"]
 	c.wounded_until = int(data["wounded_until"])
+	c.committed_until = int(data["committed_until"])
 	c.ventures_led = int(data["ventures_led"])
 	c.triumphs = int(data["triumphs"])
 	c.wounds = int(data["wounds"])

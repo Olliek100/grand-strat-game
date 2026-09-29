@@ -33,6 +33,8 @@ var hovered: District = null
 var show_heat: bool = false
 # Full fog: you only see your land, the land next to it, and what you've scouted
 var full_fog: bool = false
+# Picking a district for a councillor's task: eligible district id -> the stat to show on it (empty when not picking)
+var pick_labels: Dictionary = {}
 # Where the frame's panels sit over the map (left, bottom, right), so the legend stays visible
 var legend_margin: Vector3 = Vector3.ZERO
 var show_legend: bool = true
@@ -258,6 +260,8 @@ func _draw_overlay(canvas: CanvasItem):
 		var owner = d.owner_id()
 		if owner != "" and not show_heat and not _hidden(d):
 			canvas.draw_polyline(_closed(d.polygon), city.factions[owner].color.lightened(0.1), 2.5 / zoom)
+	for id in pick_labels:
+		canvas.draw_polyline(_closed(city.districts[id].polygon), Color(0.95, 0.78, 0.35), 3.5 / zoom)
 	if selected:
 		canvas.draw_polyline(_closed(selected.polygon), Color.WHITE, 3.0 / zoom)
 
@@ -435,7 +439,7 @@ func _draw_screen(canvas: CanvasItem):
 	var font = get_theme_default_font()
 	_draw_connections(canvas)
 	if zoom < DISTRICT_LABEL_ZOOM:
-		_draw_borough_labels(canvas, font)
+		_draw_faction_labels(canvas, font)
 	else:
 		for d in city.districts:
 			var pos = to_screen(d.center)
@@ -446,15 +450,54 @@ func _draw_screen(canvas: CanvasItem):
 		if zoom < 1.6:
 			_draw_buildings(canvas, font)
 	if selected and zoom < DISTRICT_LABEL_ZOOM:
-		_label(canvas, font, to_screen(selected.center), selected.district_name, LABEL_SIZE, Color.WHITE)
+		_label(canvas, font, to_screen(selected.center) + Vector2(0, 20), selected.district_name, LABEL_SIZE, Color.WHITE)
+	for id in pick_labels:
+		_label(canvas, font, to_screen(city.districts[id].center) + Vector2(0, 30), pick_labels[id], LABEL_SIZE, Color(0.95, 0.8, 0.4))
 	_draw_ventures(canvas, font)
 	_draw_legend(canvas, font)
 
-func _draw_borough_labels(canvas: CanvasItem, font: Font):
-	var fade = clampf((DISTRICT_LABEL_ZOOM - zoom) / 0.15, 0.3, 1.0)
-	for b in GameData.map()["boroughs"]:
-		var pos = to_screen(Vector2(b["center"][0], b["center"][1]))
-		_label(canvas, font, pos, String(b["name"]).to_upper(), 17, Color(0.95, 0.93, 0.88, 0.85 * fade))
+# Zoomed out, each faction's name sits over its land (HOI4-style), bigger for bigger factions.
+# One label per connected block of land: the main one, plus any cut-off block of 3+ districts.
+# Borough names moved to the district hover; showing both here would stack two labels on the same land.
+func _draw_faction_labels(canvas: CanvasItem, font: Font):
+	var fade = clampf((DISTRICT_LABEL_ZOOM - zoom) / 0.15, 0.8, 1.0)
+	for fid in city.factions:
+		var f: Faction = city.factions[fid]
+		var blocks = _land_blocks(fid)
+		blocks.sort_custom(func(a, b): return a.size() > b.size())
+		for i in blocks.size():
+			var block: Array = blocks[i]
+			if i > 0 and block.size() < 3:
+				break
+			var seen = block.filter(func(d): return not _hidden(d))
+			if seen.is_empty():
+				continue
+			var center = Vector2.ZERO
+			for d in seen:
+				center += d.center
+			var font_size = mini(24, 12 + int(3.0 * sqrt(block.size())))
+			_label(canvas, font, to_screen(center / seen.size()), f.display_name, font_size, Color(f.color.lightened(0.55), 0.95 * fade))
+
+# A faction's land split into blocks of districts that touch each other
+func _land_blocks(faction_id: String) -> Array:
+	var blocks = []
+	var placed = {}
+	for d in city.districts:
+		if d.owner_id() != faction_id or placed.has(d.id):
+			continue
+		var block = []
+		var frontier = [d]
+		placed[d.id] = true
+		while not frontier.is_empty():
+			var current: District = frontier.pop_back()
+			block.append(current)
+			for n_id in current.neighbor_ids:
+				var n: District = city.districts[n_id]
+				if not placed.has(n_id) and n.owner_id() == faction_id:
+					placed[n_id] = true
+					frontier.append(n)
+		blocks.append(block)
+	return blocks
 
 func _status_label(d: District) -> String:
 	var owner = d.owner_id()

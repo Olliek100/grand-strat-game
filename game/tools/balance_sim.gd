@@ -15,6 +15,14 @@ const WATCH = {
 	"raids": "launched Raid",
 	"deserted": "deserted",
 	"first_contact": "First contact",
+	"threats": "launched Threaten",
+	"tribute_paid": "tribute (",
+	"demands_refused": "refused to pay",
+	"reforms": "are no longer a",
+	"purges": "PURGE",
+	"bribes": "to buy off rival",
+	"ambitions": "achieved ",
+	"wounds": "was wounded",
 }
 
 func _on_event(text: String, _kind: String):

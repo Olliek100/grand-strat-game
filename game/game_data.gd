@@ -41,8 +41,20 @@ static func opinion_modifier(id: String) -> Dictionary:
 static func opinion_modifiers() -> Dictionary:
 	return _load("opinion_modifiers")
 
-static func ambitions() -> Dictionary:
-	return _load("ambitions")
+static func deeds() -> Dictionary:
+	return _load("deeds")
+
+static func national_ambitions() -> Dictionary:
+	return _load("national_ambitions")
+
+static func national_ambition(id: String) -> Dictionary:
+	return national_ambitions()[id]
+
+static func governments() -> Dictionary:
+	return _load("governments")
+
+static func government(id: String) -> Dictionary:
+	return governments()[id]
 
 static func council() -> Dictionary:
 	return _load("council")
@@ -96,6 +108,9 @@ static func validate() -> Array:
 			problems.append("Venture '%s' has unknown target '%s'" % [id, v.get("target")])
 		if v.get("ai_goal") not in FactionAI.GOALS:
 			problems.append("Venture '%s' has unknown ai_goal '%s'" % [id, v.get("ai_goal")])
+		for tier in VentureSystem.TIERS:
+			if v.has("raid_cooldown") and not v["raid_cooldown"].has(tier):
+				problems.append("Venture '%s' raid_cooldown has no '%s' days" % [id, tier])
 		for factor in v.get("odds_factors", []):
 			if factor not in VentureSystem.ODDS_FACTORS:
 				problems.append("Venture '%s' has unknown odds factor '%s'" % [id, factor])
@@ -133,10 +148,13 @@ static func validate() -> Array:
 		for venture_id in traits()[trait_name].get("venture_odds", {}):
 			if not ventures().has(venture_id):
 				problems.append("Trait '%s' modifies unknown venture '%s'" % [trait_name, venture_id])
-	for id in ambitions():
-		var amb: Dictionary = ambitions()[id]
-		if amb.get("condition", {}).get("type") not in CityMap.AMBITION_CONDITIONS:
-			problems.append("Ambition '%s' has unknown condition '%s'" % [id, amb.get("condition", {}).get("type")])
+		for goal in traits()[trait_name].get("ai_goals", {}):
+			if goal not in FactionAI.GOALS:
+				problems.append("Trait '%s' weights unknown AI goal '%s'" % [trait_name, goal])
+	for id in deeds():
+		var amb: Dictionary = deeds()[id]
+		if amb.get("condition", {}).get("type") not in CityMap.DEED_CONDITIONS:
+			problems.append("Deed '%s' has unknown condition '%s'" % [id, amb.get("condition", {}).get("type")])
 	for id in ventures():
 		for effect in ventures()[id].get("success_effects", []) + ventures()[id].get("failure_effects", []):
 			if effect.get("op") == "opinion" and not opinion_modifiers().has(effect.get("modifier", "raided")):
@@ -156,11 +174,44 @@ static func validate() -> Array:
 				problems.append("Trait '%s' likes or dislikes unknown trait '%s'" % [trait_name, other])
 	for id in diplomacy_actions():
 		var action: Dictionary = diplomacy_actions()[id]
-		if action.get("kind") not in ["gift", "treaty", "integrate"]:
+		if action.get("kind") not in ["gift", "treaty", "integrate", "tribute", "demand"]:
 			problems.append("Diplomatic action '%s' has unknown kind '%s'" % [id, action.get("kind")])
 		for key in ["label", "description", "cost", "days"]:
 			if not action.has(key):
 				problems.append("Diplomatic action '%s' is missing '%s'" % [id, key])
+	for id in national_ambitions():
+		var amb: Dictionary = national_ambitions()[id]
+		for key in ["label", "kind", "description", "requires", "cost", "days", "bonus", "bonus_text", "ai_goal"]:
+			if not amb.has(key):
+				problems.append("National ambition '%s' is missing '%s'" % [id, key])
+		for option in amb.get("requires", []):
+			for condition in option:
+				if condition.get("type") not in CityMap.AMBITION_CONDITIONS:
+					problems.append("National ambition '%s' has unknown requirement '%s'" % [id, condition.get("type")])
+		for other in amb.get("closes", []):
+			if not national_ambitions().has(other):
+				problems.append("National ambition '%s' closes unknown ambition '%s'" % [id, other])
+		if amb.get("ai_goal") not in FactionAI.GOALS:
+			problems.append("National ambition '%s' has unknown ai_goal '%s'" % [id, amb.get("ai_goal")])
+	for id in governments():
+		var gov: Dictionary = governments()[id]
+		for key in ["label", "description", "succession", "heir_rule", "effects", "ai_goal"]:
+			if not gov.has(key):
+				problems.append("Government '%s' is missing '%s'" % [id, key])
+		var reform: Dictionary = gov.get("reform", {})
+		for option in reform.get("requires", []):
+			for condition in option:
+				if condition.get("type") not in CityMap.AMBITION_CONDITIONS:
+					problems.append("Reform to '%s' has unknown requirement '%s'" % [id, condition.get("type")])
+				if condition.get("type") == "ambition_done" and not national_ambitions().has(condition.get("ambition")):
+					problems.append("Reform to '%s' needs unknown ambition '%s'" % [id, condition.get("ambition")])
+		for t in reform.get("backers", []) + reform.get("opposers", []):
+			if not council()["traits"].has(t):
+				problems.append("Reform to '%s' names unknown character trait '%s'" % [id, t])
+	for id in national_ambitions():
+		var unlock = national_ambitions()[id].get("unlocks", "")
+		if unlock != "" and not governments().has(unlock):
+			problems.append("National ambition '%s' unlocks unknown government '%s'" % [id, unlock])
 	for f in scenario().get("factions", []):
 		for trait_name in f.get("traits", {}):
 			if not traits().has(trait_name):

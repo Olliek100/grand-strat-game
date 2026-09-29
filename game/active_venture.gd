@@ -13,6 +13,10 @@ var leader_id: int = -1
 var funding: int = 0
 var days_total: int
 var days_left: int
+# The success chance when it was launched, to tell the player if it has changed since
+var launch_odds: float = 0.0
+# True for a run of a standing task (see StandingTask): its result feeds the task, not a one-off
+var task: bool = false
 
 func _init(p_venture_id: String, p_faction_id: String, p_target_id: String, p_district: District, p_crew: int, p_days: int):
 	venture_id = p_venture_id
@@ -29,7 +33,7 @@ func progress() -> float:
 func to_dict() -> Dictionary:
 	return {
 		"venture": venture_id, "faction": faction_id, "target": target_id, "district": district.id,
-		"crew": crew, "days_total": days_total, "days_left": days_left, "leader": leader_id, "funding": funding,
+		"crew": crew, "days_total": days_total, "days_left": days_left, "leader": leader_id, "funding": funding, "launch_odds": launch_odds, "task": task,
 	}
 
 static func from_dict(data: Dictionary, districts: Array[District]) -> ActiveVenture:
@@ -38,4 +42,6 @@ static func from_dict(data: Dictionary, districts: Array[District]) -> ActiveVen
 	v.days_left = int(data["days_left"])
 	v.leader_id = int(data["leader"])
 	v.funding = int(data["funding"])
+	v.launch_odds = float(data["launch_odds"])
+	v.task = data["task"]
 	return v

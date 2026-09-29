@@ -41,8 +41,16 @@ static func opinion_baseline(city: CityMap, holder_id: String, about_id: String)
 			break
 	if not r.protected() and not r.trade and city.shares_border(holder_id, about_id):
 		parts.append(["Border tension", -5.0])
+	# Everyone thinks a little better of a faction whose people choose its leaders
+	var trust = about.effect("all_opinion")
+	if trust != 0.0:
+		parts.append(["Respects their elections", trust])
+	# A neighbour known for keeping the peace (Good Neighbours) is easier to like
+	var goodwill = about.effect("neighbour_opinion")
+	if goodwill != 0.0 and city.shares_border(holder_id, about_id):
+		parts.append(["Good neighbours", goodwill])
 	# Renown earns respect from those with less of it
-	var renown_gap = about.renown - holder.renown
+	var renown_gap = about.reputation - holder.reputation
 	if renown_gap >= 10.0:
 		parts.append(["Respects their renown", minf(GameData.rule("renown_respect_max"), renown_gap / GameData.rule("renown_respect_divisor"))])
 	# With nowhere left to expand, neighbours start to look like the next frontier
@@ -69,14 +77,67 @@ static func common_threat(city: CityMap, a_id: String, b_id: String) -> String:
 
 # --- Actions ------------------------------------------------------------------------
 
-# What an action costs; integrating a vassal costs more the bigger it is
-static func action_cost(city: CityMap, action_id: String, to_id: String) -> Dictionary:
+# What an action costs `from_id`; integrating a vassal costs more the bigger it is. An action that can be paid
+# in more than one way (a pact, tribute) is priced in whatever the payer can best spare.
+static func action_cost(city: CityMap, action_id: String, from_id: String, to_id: String) -> Dictionary:
 	var def = GameData.diplomacy_action(action_id)
+	if def["kind"] == "tribute":
+		return tribute_price(city, from_id, to_id)
+	if def.has("cost_options"):
+		return _best_option(city.factions[from_id], def["cost_options"])
 	var cost: Dictionary = def["cost"].duplicate()
 	var per_district: Dictionary = def.get("cost_per_district", {})
 	for resource_type in per_district:
 		cost[resource_type] = cost.get(resource_type, 0.0) + per_district[resource_type] * city.districts_held(to_id)
 	return cost
+
+# Of several ways to pay, the one the payer can best spare (the most left over for its price);
+# if none is affordable, the first, so the shortfall message names something to aim for
+static func _best_option(payer: Faction, options: Array) -> Dictionary:
+	var best: Dictionary = options[0]
+	var best_ratio = -1.0
+	for option in options:
+		if not payer.can_afford(option):
+			continue
+		var resource_type: String = option.keys()[0]
+		var ratio = payer.get(resource_type) / maxf(1.0, option[resource_type])
+		if ratio > best_ratio:
+			best_ratio = ratio
+			best = option
+	return best.duplicate()
+
+# What `payer` hands `receiver` as tribute: food or materials, more for a stronger receiver
+static func tribute_price(city: CityMap, payer_id: String, receiver_id: String) -> Dictionary:
+	var def = GameData.diplomacy_action("tribute")
+	var amount = roundf(def["tribute_base"] + city.faction_strength(receiver_id) * def["tribute_per_strength"])
+	return _best_option(city.factions[payer_id], [{"supplies": amount}, {"materials": amount}])
+
+# Tribute changes hands: the payer is left alone for a while
+static func _receive_tribute(city: CityMap, payer_id: String, receiver_id: String, paid: Dictionary):
+	var receiver: Faction = city.factions[receiver_id]
+	for resource_type in paid:
+		receiver.set(resource_type, receiver.get(resource_type) + paid[resource_type])
+	var r = city.relation(payer_id, receiver_id)
+	r.spare_until[receiver_id] = maxi(r.spare_until[receiver_id], city.day + int(GameData.diplomacy_action("tribute")["spare_days"]))
+	city.change_opinion(receiver_id, payer_id, 5.0, "paid_tribute")
+	var text = "The %s paid the %s tribute (%s): no raids from the %s for %d days." % [city.faction_name(payer_id), city.faction_name(receiver_id),
+		_amount_text(paid), city.faction_name(receiver_id), r.spare_until[receiver_id] - city.day]
+	city.event.emit(text, "info" if city.player_id not in [payer_id, receiver_id] else "good")
+
+# A refused demand: the demander's raids on the refuser get better odds for a while
+static func _demand_refused(city: CityMap, from_id: String, to_id: String):
+	var r = city.relation(from_id, to_id)
+	r.bold_until[from_id] = maxi(r.bold_until[from_id], city.day + int(GameData.diplomacy_action("demand")["refused_days"]))
+	city.change_opinion(from_id, to_id, -5.0, "declined")
+	var text = "The %s refused to pay the %s tribute: their raids get +%d%% odds for %d days." % [city.faction_name(to_id), city.faction_name(from_id),
+		roundi((GameData.rule("emboldened_odds") - 1.0) * 100), r.bold_until[from_id] - city.day]
+	city.event.emit(text, "alert" if to_id == city.player_id else "info")
+
+static func _amount_text(amounts: Dictionary) -> String:
+	var parts = []
+	for resource_type in amounts:
+		parts.append("%d %s" % [amounts[resource_type], "food" if resource_type == "supplies" else resource_type])
+	return ", ".join(parts)
 
 # Trade needs a connection: touching territory, or a Market on both sides
 static func has_connection(city: CityMap, a_id: String, b_id: String) -> bool:
@@ -127,6 +188,9 @@ static func check_action(city: CityMap, action_id: String, from_id: String, to_i
 				return "Already covered by a treaty"
 			if r.pact and not in_renewal_window(city, r):
 				return "Pact holds for %d more days (renewal opens %d days before it lapses)" % [r.treaty_until_day - city.day, GameData.rule("treaty_renewal_days")]
+			# Raids, agitation and war all need a shared border, so a pact only means something between neighbours
+			if not r.pact and not city.shares_border(from_id, to_id):
+				return "You don't share a border: a pact only matters between neighbours"
 		"alliance":
 			if r.alliance and not in_renewal_window(city, r):
 				return "Alliance holds for %d more days (renewal opens %d days before it lapses)" % [r.treaty_until_day - city.day, GameData.rule("treaty_renewal_days")]
@@ -145,6 +209,20 @@ static func check_action(city: CityMap, action_id: String, from_id: String, to_i
 			var max_ratio: float = GameData.rule("minor_vassal_max_strength_ratio" if city.factions[to_id].minor else "vassal_max_strength_ratio")
 			if city.faction_strength(to_id) > city.faction_strength(from_id) * max_ratio:
 				return "They're too strong to submit (must be under %d%% of your strength)" % (max_ratio * 100)
+		"tribute":
+			if not r.menaced_recently(to_id, city.day, int(GameData.rule("menace_memory_days"))):
+				return "Only for a faction that raided you or demanded tribute lately"
+			if r.spare_until[to_id] > city.day:
+				return "They already leave you alone (%d more days)" % (r.spare_until[to_id] - city.day)
+		"demand":
+			if not city.shares_border(from_id, to_id):
+				return "You don't share a border with them"
+			if r.protected():
+				return "You have a treaty with them"
+			if r.spare_until[from_id] > city.day:
+				return "You promised them no raids for %d more days" % (r.spare_until[from_id] - city.day)
+			if not for_resolution and r.last_demand[from_id] > 0 and city.day - r.last_demand[from_id] < int(GameData.rule("menace_memory_days")):
+				return "You demanded tribute %d days ago; wait until %d have passed" % [city.day - r.last_demand[from_id], GameData.rule("menace_memory_days")]
 		"integrate":
 			if r.overlord != from_id:
 				return "They're not your vassal"
@@ -156,8 +234,8 @@ static func check_action(city: CityMap, action_id: String, from_id: String, to_i
 				return "Vassal for %d days (needs %d)" % [days_as_vassal, needed]
 			if city.opinion_of(to_id, from_id) < min_opinion:
 				return "Not loyal enough (opinion %d, needs %d)" % [city.opinion_of(to_id, from_id), min_opinion]
-	if not for_resolution and not city.factions[from_id].can_afford(action_cost(city, action_id, to_id)):
-		return city.factions[from_id].shortfall(action_cost(city, action_id, to_id))
+	if not for_resolution and not city.factions[from_id].can_afford(action_cost(city, action_id, from_id, to_id)):
+		return city.factions[from_id].shortfall(action_cost(city, action_id, from_id, to_id))
 	return ""
 
 # Pacts and alliances can be renewed in their final months
@@ -167,14 +245,16 @@ static func in_renewal_window(city: CityMap, r: Relation) -> bool:
 # Chance the other side agrees: {"chance", "base", "factors": [[reason, multiplier], ...]}
 static func acceptance(city: CityMap, action_id: String, from_id: String, to_id: String) -> Dictionary:
 	var def = GameData.diplomacy_action(action_id)
-	if def["kind"] == "gift":
+	if def["kind"] in ["gift", "tribute"]:
 		return {"chance": 1.0, "base": 1.0, "factors": []}
+	if def["kind"] == "demand":
+		return _demand_acceptance(city, from_id, to_id)
 	var from: Faction = city.factions[from_id]
 	var to: Faction = city.factions[to_id]
 	var factors = []
 	var opinion = city.opinion_of(to_id, from_id)
 	factors.append(["Their opinion of you (%+d)" % opinion, clampf(1.0 + opinion / 100.0, 0.1, 2.0)])
-	var reputation = from.traits.effect("diplomacy_mult")
+	var reputation = from.effect("diplomacy_mult")
 	if reputation != 1.0:
 		factors.append(["Your Diplomatic reputation", reputation])
 	if from.renown >= 1.0:
@@ -191,15 +271,18 @@ static func acceptance(city: CityMap, action_id: String, from_id: String, to_id:
 			1.0 + (envoy.skills["diplomacy"] - GameData.rule("skill_neutral")) * GameData.rule("envoy_acceptance_step")])
 	match action_id:
 		"trade":
-			var interest = to.traits.effect("trade_interest_mult")
+			var interest = to.effect("trade_interest_mult")
 			if interest != 1.0:
 				factors.append(["They value trade", interest])
 			if city.shares_border(from_id, to_id):
 				factors.append(["Neighbours", 1.2])
 		"pact":
-			var interest = to.traits.effect("pact_interest_mult")
+			var interest = to.effect("pact_interest_mult")
 			if interest != 1.0:
 				factors.append(["They prefer a free hand", interest])
+			# Raiding is how a raider crew lives: a promise not to is a big ask (tribute or threats work better)
+			if city.is_raider(to_id):
+				factors.append(["Raiders would rather keep a free hand", 0.5])
 			if city.at_war_with_anyone(to_id):
 				factors.append(["They're busy with another war", 1.3])
 			if city.faction_strength(from_id) > city.faction_strength(to_id) * 1.3:
@@ -227,17 +310,39 @@ static func acceptance(city: CityMap, action_id: String, from_id: String, to_id:
 		chance *= factor[1]
 	return {"chance": clampf(chance, MIN_CHANCE, MAX_CHANCE), "base": def["base"], "factors": factors}
 
+# Whether a faction gives in to a demand for tribute: fear of the demander, and whether it can pay
+static func _demand_acceptance(city: CityMap, from_id: String, to_id: String) -> Dictionary:
+	var factors = []
+	var ratio = city.faction_strength(from_id) / maxf(1.0, city.faction_strength(to_id))
+	factors.append(["They're %d%% of your strength" % (100.0 / maxf(0.01, ratio)), clampf(0.4 + ratio * 0.6, 0.3, 1.8)])
+	var feared = city.factions[from_id].effect("demand_acceptance_mult")
+	if feared != 1.0:
+		factors.append(["Their name is feared", feared])
+	var price = tribute_price(city, to_id, from_id)
+	if not city.factions[to_id].can_afford(price):
+		factors.append(["They can't pay %s" % _amount_text(price), 0.0])
+	if city.at_war_with_anyone(to_id):
+		factors.append(["They're busy with a war", 1.3])
+	var chance: float = GameData.diplomacy_action("demand")["base"]
+	for factor in factors:
+		chance *= factor[1]
+	return {"chance": clampf(chance, 0.0, MAX_CHANCE), "base": GameData.diplomacy_action("demand")["base"], "factors": factors}
+
 static func start_action(city: CityMap, action_id: String, from_id: String, to_id: String) -> String:
 	var err = check_action(city, action_id, from_id, to_id)
 	if err != "":
 		return err
 	var def = GameData.diplomacy_action(action_id)
-	city.factions[from_id].pay(action_cost(city, action_id, to_id))
+	# Tribute is handed over when the envoy arrives, so it's never lost if things change on the way
+	if def["kind"] != "tribute":
+		city.factions[from_id].pay(action_cost(city, action_id, from_id, to_id))
+	if def["kind"] == "demand":
+		city.relation(from_id, to_id).last_demand[from_id] = city.day
 	city.missions.append(DiplomaticMission.new(action_id, from_id, to_id, int(def["days"])))
 	city.feed_trait_by_name(city.factions[from_id], "Diplomatic", 2.0)
 	if from_id == city.player_id:
 		var chance = acceptance(city, action_id, from_id, to_id)["chance"]
-		var odds = "" if def["kind"] == "gift" else " (%d%% chance they agree)" % (chance * 100)
+		var odds = "" if def["kind"] in ["gift", "tribute"] else " (%d%% chance they agree)" % (chance * 100)
 		city.event.emit("Envoy sent to the %s: %s, arrives in %d days%s." % [city.faction_name(to_id), def["label"].to_lower(), def["days"], odds], "info")
 	return ""
 
@@ -248,10 +353,18 @@ static func resolve_mission(city: CityMap, m: DiplomaticMission):
 	var player_involved = m.from_id == city.player_id or m.to_id == city.player_id
 	if def["kind"] == "gift":
 		var current = city.opinion_of(m.to_id, m.from_id)
-		var gain: float = def["opinion"] * (1.0 - maxf(0.0, current) / 100.0) * city.factions[m.from_id].traits.effect("diplomacy_mult")
+		var gain: float = def["opinion"] * (1.0 - maxf(0.0, current) / 100.0) * city.factions[m.from_id].effect("diplomacy_mult")
 		city.change_opinion(m.to_id, m.from_id, gain, "gift")
 		if player_involved:
 			city.event.emit("The %s accepted gifts from the %s (opinion %+d)." % [city.faction_name(m.to_id), city.faction_name(m.from_id), gain], "good" if m.from_id == city.player_id else "info")
+		return
+	if def["kind"] == "tribute":
+		var price = tribute_price(city, m.from_id, m.to_id)
+		if city.factions[m.from_id].can_afford(price):
+			city.factions[m.from_id].pay(price)
+			_receive_tribute(city, m.from_id, m.to_id, price)
+		elif m.from_id == city.player_id:
+			city.event.emit("Your tribute to the %s never arrived: %s." % [city.faction_name(m.to_id), city.factions[m.from_id].shortfall(price).to_lower()], "bad")
 		return
 	var err = check_action(city, m.action_id, m.from_id, m.to_id, true)
 	if err != "":
@@ -261,6 +374,12 @@ static func resolve_mission(city: CityMap, m: DiplomaticMission):
 	# The player answers proposals made to them; AI factions decide on the odds
 	if m.to_id == city.player_id:
 		city.add_proposal(m.action_id, m.from_id)
+		return
+	if def["kind"] == "demand":
+		if city.rng.randf() < _demand_acceptance(city, m.from_id, m.to_id)["chance"]:
+			form_treaty(city, m.action_id, m.from_id, m.to_id)
+		else:
+			_demand_refused(city, m.from_id, m.to_id)
 		return
 	var chance = acceptance(city, m.action_id, m.from_id, m.to_id)["chance"]
 	if city.rng.randf() < chance:
@@ -275,6 +394,15 @@ static func form_treaty(city: CityMap, action_id: String, from_id: String, to_id
 	var names = [city.faction_name(from_id), city.faction_name(to_id)]
 	var text = ""
 	match def.get("treaty", def["kind"]):
+		"demand":
+			# The one the demand was made of pays up
+			var price = tribute_price(city, to_id, from_id)
+			if not city.factions[to_id].can_afford(price):
+				_demand_refused(city, from_id, to_id)
+				return
+			city.factions[to_id].pay(price)
+			_receive_tribute(city, to_id, from_id, price)
+			return
 		"trade":
 			r.trade = true
 			text = "The %s and the %s signed a trade agreement." % names
@@ -364,4 +492,4 @@ static func trade_income(city: CityMap, faction_id: String, partner_id: String) 
 				contacts += 1
 				break
 	var income = GameData.rule("trade_base_income") + contacts * GameData.rule("trade_income_per_contact") + markets
-	return income * city.factions[faction_id].traits.effect("trade_income_mult")
+	return income * city.factions[faction_id].effect("trade_income_mult")

@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Grand Strategy Game"
-config/version="1.38.0"
+config/version="1.40.0"
 run/main_scene="res://main_scene.tscn"
 config/features=PackedStringArray("4.7")
 

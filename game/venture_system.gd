@@ -5,18 +5,19 @@ class_name VentureSystem
 # Adding a venture that reuses these blocks needs no code; a genuinely new mechanic adds a block here.
 
 # Where a venture can be launched (checked in CityMap.check_launch)
-const TARGET_KINDS = ["unclaimed_border", "enemy_border", "war_border", "own", "scavenge", "scout", "market"]
+const TARGET_KINDS = ["unclaimed_border", "enemy_border", "war_border", "own", "scavenge", "scout", "market", "raider_border"]
 # Odds modifiers a venture can list in "odds_factors"
 const ODDS_FACTORS = ["ruin_density", "claimant_present", "target_secured", "defender_traits",
-	"defender_on_site", "development", "unrest", "grievance_bonus", "hostile_on_site", "locals_mood", "trade_partner"]
+	"defender_on_site", "development", "unrest", "grievance_bonus", "hostile_on_site", "locals_mood", "trade_partner",
+	"emboldened", "strength_ratio", "your_arms"]
 # Operations a venture can list in "success_effects" / "failure_effects"
 const EFFECT_OPS = ["influence", "grievance", "gain", "steal", "development", "ruin", "population", "food_source", "scout", "scout_around", "hazard", "pay_owner",
-	"crew_loss", "crew_share_loss", "exhaustion", "opinion", "destroy_building"]
+	"crew_loss", "crew_share_loss", "exhaustion", "opinion", "destroy_building", "spare", "embolden"]
 # Outcome tiers, best to worst
 const TIERS = ["triumph", "success", "setback", "disaster"]
 
 const MIN_ODDS = 0.05
-const MAX_ODDS = 0.95
+const MAX_ODDS = 0.98
 
 # Odds of a venture: who leads it, how many crew go, how well it's funded, the faction's traits,
 # and the target. Returns {"odds": success chance, "base", "factors": [[label, multiplier], ...],
@@ -25,7 +26,9 @@ const MAX_ODDS = 0.95
 static func compute_odds(venture_id: String, faction: Faction, district: District, city: CityMap, target_id: String,
 		leader: Character = null, crew: int = -1, funding: int = 0) -> Dictionary:
 	var def = GameData.venture(venture_id)
-	var factors: Array = faction.traits.get_venture_factors(venture_id)
+	var factors: Array = faction.venture_factors(venture_id)
+	if faction.caretaker_until > city.day:
+		factors.append(["Caretaker government (%d days)" % (faction.caretaker_until - city.day), 0.9])
 	for factor_id in def["odds_factors"]:
 		_add_factor(factors, factor_id, faction, district, city, target_id)
 	_add_building_factors(factors, venture_id, def, faction, district, city, target_id)
@@ -49,7 +52,13 @@ static func compute_odds(venture_id: String, faction: Faction, district: Distric
 	var target: Faction = city.factions.get(target_id)
 	if def.get("hostile", false) and target and target.arms >= 1.0:
 		factors.append(["Defenders armed (%d arms)" % target.arms, 1.0 - minf(target.arms, arms_cap) * GameData.rule("arms_defence_step")])
-	if crew >= 0 and crew != int(def["crew"]):
+	# Against defenders on guard, what counts is how many you bring compared with them: overwhelming
+	# force can make an attack nearly certain. Otherwise more hands help, up to a point.
+	var size = int(def["crew"]) if crew < 0 else crew
+	var guards = city.defenders_at(target_id, district) if def.get("hostile", false) and target_id != "" else 0
+	if guards > 0:
+		factors.append(["Your crew of %d against %d defenders" % [size, guards], clampf(0.8 + 0.2 * float(size) / guards, 0.8, GameData.rule("outnumber_max"))])
+	elif crew >= 0 and crew != int(def["crew"]):
 		factors.append(["Crew of %d" % crew, clampf(1.0 + (crew - int(def["crew"])) * GameData.rule("crew_odds_step"), 0.7, 1.35)])
 	if funding > 0:
 		factors.append(["Extra funding x%d" % funding, 1.0 + funding * GameData.rule("funding_odds_step")])
@@ -58,9 +67,9 @@ static func compute_odds(venture_id: String, faction: Faction, district: Distric
 	var extra_disaster = 0.0
 	if venture_id != "scout":
 		if city.knows(faction.id, district):
-			if district.hazard >= 0.05:
-				factors.append(["Danger here (%s)" % danger_label(district.hazard), 1.0 - district.hazard * GameData.rule("hazard_odds_step")])
-				extra_disaster = district.hazard * GameData.rule("hazard_disaster_share")
+			if city.danger(district) >= 0.05:
+				factors.append(["Danger here (%s)" % danger_label(city.danger(district)), 1.0 - city.danger(district) * GameData.rule("hazard_odds_step")])
+				extra_disaster = city.danger(district) * GameData.rule("hazard_disaster_share")
 		else:
 			factors.append(["Unscouted: going in blind", GameData.rule("blind_odds")])
 			extra_disaster = GameData.rule("blind_disaster_share")
@@ -68,15 +77,29 @@ static func compute_odds(venture_id: String, faction: Faction, district: Distric
 	for factor in factors:
 		odds *= factor[1]
 	odds = clampf(odds, MIN_ODDS, MAX_ODDS)
-	# Skill widens the top of success into Triumph; danger widens the bottom of failure into Disaster
+	# Skill and good odds widen the top of success into Triumph; danger widens the bottom of failure into
+	# Disaster. A well-prepared venture (90%+) can still fail, but never disastrously.
 	var triumph_share = clampf(GameData.rule("triumph_share_base") + skill * GameData.rule("triumph_share_per_skill")
-		+ (leader.triumph_bonus() if leader else 0.0), 0.05, 0.5)
+		+ (leader.triumph_bonus() if leader else 0.0) + maxf(0.0, odds - 0.5) * GameData.rule("triumph_share_per_odds"), 0.05, 0.6)
 	var disaster_share = clampf(GameData.rule("disaster_share_base") + def["danger"] + extra_disaster - skill * GameData.rule("disaster_share_per_skill"), 0.03, 0.7)
+	if odds >= GameData.rule("no_disaster_odds"):
+		disaster_share = 0.0
 	var tiers = {
 		"triumph": odds * triumph_share, "success": odds * (1.0 - triumph_share),
 		"setback": (1.0 - odds) * (1.0 - disaster_share), "disaster": (1.0 - odds) * disaster_share,
 	}
 	return {"odds": odds, "base": def["base_success"], "factors": factors, "tiers": tiers}
+
+# Picks an outcome tier and, for a success, how cleanly it went: {"tier", "quality"}. Quality runs from
+# x0.8 (only just made it) to x1.2 (a clean job) and scales what the success gains
+static func roll_outcome(tiers: Dictionary, rng: RandomNumberGenerator) -> Dictionary:
+	var roll = rng.randf()
+	var success = tiers["triumph"] + tiers["success"]
+	if roll < success:
+		var margin = 1.0 - roll / maxf(0.001, success)
+		return {"tier": "triumph" if roll < tiers["triumph"] else "success", "quality": lerpf(0.8, 1.2, margin)}
+	roll -= success
+	return {"tier": "setback" if roll < tiers["setback"] else "disaster", "quality": 1.0}
 
 # Picks an outcome tier from the chances in compute_odds
 static func roll_tier(tiers: Dictionary, rng: RandomNumberGenerator) -> String:
@@ -104,7 +127,7 @@ static func _add_factor(factors: Array, factor_id: String, faction: Faction, d: 
 					factors.append(["Their control %d" % d.share(target_id), mult])
 		"defender_traits":
 			if target:
-				for entry in target.traits.traits_with_effect("defence_mult"):
+				for entry in target.effects_with_labels("defence_mult"):
 					factors.append(["Defenders are %s" % entry[0], entry[1]])
 		"defender_on_site":
 			if target:
@@ -123,6 +146,17 @@ static func _add_factor(factors: Array, factor_id: String, faction: Faction, d: 
 		"trade_partner":
 			if target_id != "" and city.relation(faction.id, target_id).trade:
 				factors.append(["Trade agreement with them", 1.2])
+		"emboldened":
+			if target and city.relation(faction.id, target_id).bold_until[faction.id] > city.day:
+				factors.append(["Emboldened against the %s" % target.display_name, GameData.rule("emboldened_odds")])
+		"strength_ratio":
+			if target:
+				var mine = city.faction_strength(faction.id)
+				var theirs = maxf(1.0, city.faction_strength(target_id))
+				factors.append(["Your strength %d vs their %d" % [mine, theirs], clampf(0.6 + 0.4 * mine / theirs, 0.6, 1.4)])
+		"your_arms":
+			if faction.arms >= 1.0:
+				factors.append(["Your arms (%d)" % faction.arms, 1.0 + minf(faction.arms, GameData.rule("arms_effect_cap")) * GameData.rule("arms_odds_step")])
 		"hostile_on_site":
 			for fid in city.factions:
 				if fid != faction.id and city.has_venture_at(fid, d):
@@ -142,9 +176,10 @@ static func _add_building_factors(factors: Array, venture_id: String, def: Dicti
 		if def.get("hostile", false) and owner == target_id and building["effects"].has("defence_mult"):
 			factors.append(["Defended by %s" % building["label"], building["effects"]["defence_mult"]])
 
-# Applies a list of effects from venture data.
+# Applies a list of effects from venture data. `quality` (x0.8 to x1.2, from how cleanly a success went)
+# scales what the actor gains: resources, loot, influence, food sources and rebuilding.
 # Returns {"lost": crew lost, "values": numbers for the log text (e.g. {supplies}), "notes": extra log phrases}
-static func apply_effects(effects: Array, actor: Faction, target_id: String, d: District, city: CityMap, crew: int = 0) -> Dictionary:
+static func apply_effects(effects: Array, actor: Faction, target_id: String, d: District, city: CityMap, crew: int = 0, quality: float = 1.0) -> Dictionary:
 	var target: Faction = city.factions.get(target_id)
 	var lost = 0
 	var values = {}
@@ -154,26 +189,30 @@ static func apply_effects(effects: Array, actor: Faction, target_id: String, d: 
 			"influence":
 				var who = actor.id if e.get("who", "self") == "self" else target_id
 				if who != "":
-					d.add_influence(who, e["amount"])
+					d.add_influence(who, e["amount"] * (quality if who == actor.id and e["amount"] > 0.0 else 1.0))
 			"grievance":
 				var amount: float = e["amount"]
 				if e.get("scaled", false):
-					amount *= actor.traits.effect("hostile_grievance_mult")
+					amount *= actor.effect("hostile_grievance_mult")
 				d.grievance = clampf(d.grievance + amount, 0.0, 100.0)
 			"gain":
-				var amount: float = e["amount"] + e.get("per_ruin", 0.0) * d.ruin_level
+				var amount: float = (e["amount"] + e.get("per_ruin", 0.0) * d.ruin_level) * quality
+				if e.has("mult_effect"):
+					amount *= actor.effect(e["mult_effect"])
 				actor.set(e["resource"], actor.get(e["resource"]) + amount)
 				values[e["resource"]] = int(amount)
 			"steal":
 				var taken = 0.0
+				# A built-up district yields more loot than a fresh claim
+				var want: float = e["amount"] * (city.raid_worth(d) if e.get("worth", false) else 1.0) * quality
 				if target:
-					taken = minf(e["amount"], target.get(e["resource"]))
+					taken = minf(want, target.get(e["resource"]))
 					target.set(e["resource"], target.get(e["resource"]) - taken)
 				var amount: float = taken + e.get("bonus", 0.0)
 				actor.set(e["resource"], actor.get(e["resource"]) + amount)
 				values[e["resource"]] = int(amount)
 			"development":
-				d.development = clampf(d.development + e["amount"], 0.1, 1.0)
+				d.development = clampf(d.development + e["amount"] * (quality if e["amount"] > 0.0 else 1.0), 0.1, 1.0)
 			"ruin":
 				d.ruin_level = clampf(d.ruin_level + e["amount"], 0.0, 1.0)
 			"scout":
@@ -189,7 +228,7 @@ static func apply_effects(effects: Array, actor: Faction, target_id: String, d: 
 			"hazard":
 				d.hazard = clampf(d.hazard + e["amount"], 0.0, 0.6)
 			"food_source":
-				d.food_yield = minf(d.food_yield + e["amount"], GameData.rule("food_source_cap"))
+				d.food_yield = minf(d.food_yield + e["amount"] * quality, GameData.rule("food_source_cap"))
 			"population":
 				d.population *= e["mult"]
 			"crew_loss":
@@ -205,6 +244,18 @@ static func apply_effects(effects: Array, actor: Faction, target_id: String, d: 
 			"opinion":
 				if target:
 					city.change_opinion(target_id, actor.id, e["amount"], e.get("modifier", "raided"))
+			"spare":
+				# The target promises not to raid the actor for a while
+				if target:
+					var r = city.relation(actor.id, target_id)
+					r.spare_until[target_id] = maxi(r.spare_until[target_id], city.day + int(e["days"]))
+					notes.append("no raids from the %s for %d days" % [target.display_name, r.spare_until[target_id] - city.day])
+			"embolden":
+				# The target's raids on the actor get better odds for a while
+				if target:
+					var r = city.relation(actor.id, target_id)
+					r.bold_until[target_id] = maxi(r.bold_until[target_id], city.day + int(e["days"]))
+					notes.append("their raids on you get +%d%% odds for %d days" % [roundi((GameData.rule("emboldened_odds") - 1.0) * 100), e["days"]])
 			"destroy_building":
 				if not d.buildings.is_empty() and city.rng.randf() < e.get("chance", 1.0):
 					var index = city.rng.randi_range(0, d.buildings.size() - 1)
@@ -213,6 +264,8 @@ static func apply_effects(effects: Array, actor: Faction, target_id: String, d: 
 	return {"lost": lost, "values": values, "notes": notes}
 
 static func danger_label(hazard: float) -> String:
+	if hazard < 0.04:
+		return "none"
 	if hazard < 0.12:
 		return "low"
 	if hazard < 0.25:

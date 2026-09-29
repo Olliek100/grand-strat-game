@@ -1,0 +1,106 @@
+{
+	"name_to_fear": {
+		"label": "A Name to Fear", "kind": "War", "ai_goal": "harass", "ai_value": 0.8,
+		"description": "Make the crew's name a threat in itself: people pay rather than fight.",
+		"requires": [[{"type": "trait", "trait": "Militaristic"}]],
+		"cost": {"renown": 25}, "days": 60,
+		"closes": ["good_neighbours"],
+		"bonus": {"venture_odds": {"raid": 1.1, "assault": 1.1}, "effects": {"demand_acceptance_mult": 1.2}},
+		"bonus_text": "Raids and assaults +10%; demands for tribute 20% likelier to be paid"
+	},
+	"good_neighbours": {
+		"label": "Good Neighbours", "kind": "Diplomacy", "ai_goal": "buy", "ai_value": 0.8,
+		"description": "Keep your word and your borders quiet, and let everyone see it.",
+		"requires": [[{"type": "treaties", "amount": 2}], [{"type": "trait", "trait": "Diplomatic"}]],
+		"cost": {"renown": 25}, "days": 60,
+		"closes": ["name_to_fear"],
+		"bonus": {"effects": {"diplomacy_mult": 1.15, "neighbour_opinion": 10}},
+		"bonus_text": "Treaties 15% likelier to be accepted; every neighbour thinks 10 better of you"
+	},
+	"open_for_trade": {
+		"label": "Open for Trade", "kind": "Trade", "ai_goal": "income", "ai_value": 0.8,
+		"description": "Stalls, safe roads and fair weights: make your land the place to trade.",
+		"requires": [[{"type": "trait", "trait": "Merchant"}], [{"type": "building_type", "building": "market", "amount": 1}]],
+		"cost": {"renown": 30}, "days": 90,
+		"bonus": {"venture_odds": {"trade": 1.1}, "effects": {"trade_income_mult": 1.25}},
+		"bonus_text": "Trade income +25%; Trade Runs +10%"
+	},
+	"walls_and_watches": {
+		"label": "Walls and Watches", "kind": "Order", "ai_goal": "defend", "ai_value": 0.7,
+		"description": "After the last attack, nobody sleeps unguarded again.",
+		"requires": [[{"type": "raided_or_war", "days": 90}]],
+		"cost": {"renown": 20}, "days": 45,
+		"bonus": {"effects": {"defence_mult": 0.9, "watchtower_build_mult": 0.5}},
+		"bonus_text": "Attacks on all your districts x0.9; Watchtowers build in half the time"
+	},
+	"feed_the_city": {
+		"label": "Feed the City", "kind": "People", "ai_goal": "food", "ai_value": 0.75,
+		"description": "Gardens on every roof and a kitchen on every street.",
+		"requires": [[{"type": "food_short", "below": 0.5}], [{"type": "trait", "trait": "Socialist"}]],
+		"cost": {"renown": 20}, "days": 60,
+		"closes": ["every_hand_a_soldier"],
+		"bonus": {"effects": {"food_mult": 1.1}},
+		"bonus_text": "Food +10% in every district"
+	},
+	"salvage_rights": {
+		"label": "Salvage Rights", "kind": "Build", "ai_goal": "materials", "ai_value": 0.9,
+		"description": "Organised crews, marked ruins and tools that don't break.",
+		"requires": [[{"type": "districts_held", "amount": 3}, {"type": "materials_below", "amount": 30}]],
+		"cost": {"renown": 20}, "days": 45,
+		"bonus": {"effects": {"scavenge_yield_mult": 1.25}},
+		"bonus_text": "Scavenging brings back 25% more materials"
+	},
+	"a_city_again": {
+		"label": "A City Again", "kind": "Build", "ai_goal": "develop", "ai_value": 0.9,
+		"description": "Plan streets, not shelters: build to last.",
+		"requires": [[{"type": "buildings_owned", "amount": 4}]],
+		"cost": {"renown": 40}, "days": 120,
+		"bonus": {"effects": {"secured_slots": 1}},
+		"bonus_text": "+1 building slot in every Secured district"
+	},
+	"loyal_lieutenants": {
+		"label": "Loyal Lieutenants", "kind": "People", "ai_goal": "stabilize", "ai_value": 1.0,
+		"description": "Bind the council to the leader with oaths, shares and favours.",
+		"requires": [[{"type": "council_loyalty_below", "amount": 40}], [{"type": "split_risk", "amount": 0.3}]],
+		"cost": {"renown": 25}, "days": 60,
+		"bonus": {"effects": {"split_chance_mult": 0.75}, "council_loyalty": 10},
+		"bonus_text": "The council's loyalty +10 for good; the chance of a split at a succession x0.75"
+	},
+	"every_hand_a_soldier": {
+		"label": "Every Hand a Soldier", "kind": "War", "ai_goal": "arms", "ai_value": 1.0,
+		"description": "Everyone trains, everyone serves.",
+		"requires": [[{"type": "trait", "trait": "Militaristic"}, {"type": "districts_held", "amount": 6}]],
+		"cost": {"renown": 35}, "days": 90,
+		"closes": ["feed_the_city"],
+		"bonus": {"effects": {"crew_cap_mult": 1.2}},
+		"bonus_text": "Manpower limit +20%"
+	},
+	"welfare_for_all": {
+		"label": "Welfare for All", "kind": "Order", "ai_goal": "stabilize", "ai_value": 1.0,
+		"description": "Nobody goes without: food, shelter and care shared out fairly.",
+		"requires": [[{"type": "trait", "trait": "Socialist"}]],
+		"cost": {"renown": 30}, "days": 90,
+		"while": "no_raids",
+		"unlocks": "politburo",
+		"bonus": {"effects": {"owned_daily_grievance": -0.05}},
+		"bonus_text": "Grievance falls 0.05 a day in all your districts; unlocks the Politburo reform"
+	},
+	"strongmans_crown": {
+		"label": "The Strongman's Crown", "kind": "Order", "ai_goal": "conquer", "ai_value": 0.8,
+		"description": "One leader, one line: make the leader's word the law and the heir certain.",
+		"requires": [[{"type": "leader_skill", "skill": "command", "amount": 7}], [{"type": "leader_trait", "trait": "conqueror"}]],
+		"cost": {"renown": 40}, "days": 90,
+		"unlocks": "autocracy",
+		"bonus": {"effects": {"heir_claim": 20}},
+		"bonus_text": "The heir's claim +20; unlocks the Autocracy reform"
+	},
+	"charter_the_guilds": {
+		"label": "Charter the Guilds", "kind": "Trade", "ai_goal": "buy", "ai_value": 0.8,
+		"description": "Give the traders seats, rules and a stake in the crew.",
+		"requires": [[{"type": "trade_agreements", "amount": 3}], [{"type": "trait", "trait": "Merchant"}, {"type": "trade_agreements", "amount": 2}]],
+		"cost": {"renown": 40}, "days": 90,
+		"unlocks": "oligarchy",
+		"bonus": {"effects": {"trade_income_mult": 1.1}},
+		"bonus_text": "Trade income +10%; unlocks the Merchant Oligarchy reform"
+	}
+}

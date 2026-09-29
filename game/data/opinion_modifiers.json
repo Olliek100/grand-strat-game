@@ -9,5 +9,8 @@
 	"treaty_breaker": {"label": "Known to break treaties", "decay": 0.02, "limit": 40},
 	"released": {"label": "Released us from vassalage", "decay": 0.05, "limit": 20},
 	"declined": {"label": "Turned down our proposal", "decay": 0.1, "limit": 20},
-	"traded_with_us": {"label": "Trades at our market", "decay": 0.04, "limit": 25}
+	"traded_with_us": {"label": "Trades at our market", "decay": 0.04, "limit": 25},
+	"raids_neighbours": {"label": "Raids our neighbours", "decay": 0.05, "limit": 20},
+	"threatened": {"label": "Threatened us", "decay": 0.08, "limit": 30},
+	"paid_tribute": {"label": "Pays us tribute", "decay": 0.1, "limit": 15}
 }

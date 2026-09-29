@@ -30,6 +30,15 @@ var treaty_until_day: int = 0
 # Set once both sides have been warned that the pact or alliance is about to lapse
 var lapse_warned: bool = false
 
+# Raiding between the two, per faction id (days; 0 = never):
+# the last day that side raided the other, or demanded tribute from it
+var last_raid: Dictionary = {}
+var last_demand: Dictionary = {}
+# That side has promised not to raid the other until this day (tribute paid, or threatened off)
+var spare_until: Dictionary = {}
+# That side raids the other with better odds until this day (a demand refused, a threat that backfired)
+var bold_until: Dictionary = {}
+
 func _init(p_a: String, p_b: String):
 	a = p_a
 	b = p_b
@@ -37,6 +46,14 @@ func _init(p_a: String, p_b: String):
 	opinion = {a: 0.0, b: 0.0}
 	baseline = {a: 0.0, b: 0.0}
 	modifiers = {a: [], b: []}
+	last_raid = {a: 0, b: 0}
+	last_demand = {a: 0, b: 0}
+	spare_until = {a: 0, b: 0}
+	bold_until = {a: 0, b: 0}
+
+# Whether `faction_id` raided the other side, or demanded tribute from it, in the last `days` days
+func menaced_recently(faction_id: String, day: int, days: int) -> bool:
+	return (last_raid[faction_id] > 0 and day - last_raid[faction_id] <= days) or (last_demand[faction_id] > 0 and day - last_demand[faction_id] <= days)
 
 func other(faction_id: String) -> String:
 	return b if faction_id == a else a
@@ -73,6 +90,7 @@ func to_dict() -> Dictionary:
 		"exhaustion": exhaustion.duplicate(), "opinion": opinion.duplicate(), "peace_offered_by": peace_offered_by,
 		"trade": trade, "pact": pact, "alliance": alliance, "overlord": overlord, "vassal_since_day": vassal_since_day, "treaty_until_day": treaty_until_day,
 		"baseline": baseline.duplicate(), "modifiers": modifiers.duplicate(true), "lapse_warned": lapse_warned,
+		"last_raid": last_raid.duplicate(), "last_demand": last_demand.duplicate(), "spare_until": spare_until.duplicate(), "bold_until": bold_until.duplicate(),
 	}
 
 static func from_dict(data: Dictionary) -> Relation:
@@ -92,4 +110,8 @@ static func from_dict(data: Dictionary) -> Relation:
 	r.baseline = data["baseline"]
 	r.modifiers = data["modifiers"]
 	r.lapse_warned = data["lapse_warned"]
+	for key in ["last_raid", "last_demand", "spare_until", "bold_until"]:
+		var saved: Dictionary = data[key]
+		for fid in saved:
+			r.get(key)[fid] = int(saved[fid])
 	return r

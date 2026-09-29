@@ -2,6 +2,44 @@
 
 Decisions that still stand: each with what was rejected and why. New entries go at the top. Check this before relitigating a settled question. Per-build detail (numbers, tuning, simulation results) is in /CHANGELOG.md.
 
+**2026-09-29 (standing tasks; see 13-standing-tasks.md)**
+
+- **Routine ventures on your own land become standing tasks:** Scavenge, Rebuild, Safeguard the Shelter, Secure Food, Relief, Gather Weapons and Reinforce. A councillor is assigned to a district and works it venture after venture until the district's own state says it's done (ruins stripped, fully rebuilt, fully controlled, food sources worked, calm, armoury full, threat gone). Every run is still a venture with the same odds and outcomes (pillar 1). The rule of thumb: the system takes actions, the player makes decisions. Rejected: launching every routine venture by hand (too many clicks for no decision), and queues or automatic reassignment (the player decides every assignment).
+- **Only council seats hold tasks,** so choosing the council is the key decision. At most four tasks at once.
+- **One-offs stay one-offs** where there's a real decision or someone else involved: Scout, Settle, Negotiate, scavenging unclaimed ruins (it builds a claim), Trade Runs, Raid, Assault, Agitate, Threaten.
+- **Commitment:** an assigned councillor is committed for two runs of the task. Stopping costs nothing, but they take no new work until those two runs have passed. A task that ends naturally frees them at once. No queue, no auto-reassignment.
+- **The opportunity cost of doc 11 stays:** every run pays its venture's cost, and the councillor and crew are taken for the whole task. A task that can't pay pauses; one whose councillor is wounded pauses until they heal. Task runs wound half as often as one-off launches.
+- **The AI assigns tasks the same way,** from its one list, with the same eligibility (pillar 3).
+
+**2026-09-28 (S4 choices; see 12-choices-ambitions-and-government.md)**
+
+- **Renown splits in two.** *Reputation* is everything a faction has ever earned and never goes down; it carries renown's passive effects (crew and captain limits, recruit quality, the heir's claim, respect). *Renown* is what you spend, on ambitions and some reforms; unspent, it adds a minor diplomacy bonus. Rejected: one number, where spending renown would shrink your crew limit.
+- **The automatic milestones stay, as Deeds,** the source of renown. Rejected: replacing them with chosen ambitions (the spine's parked note), which would leave renown with almost no income.
+- **National Ambitions are deterministic:** a renown cost, a timer, a lasting bonus, sometimes a condition while running. One at a time, gated by situation, some mutually exclusive, some unlocking reforms. Rejected: ambitions as ventures with odds (you're investing, not gambling).
+- **Governments:** Gang (new, where minor factions start), Warlord (majors), Autocracy, Politburo, Merchant Oligarchy, Democracy. Each sets its own succession rule and way of breaking: Autocracy splits rarely but badly; the Politburo purges instead of splitting; the Oligarchy bribes its way through a succession; Democracy is slow and safe.
+- **Reforms are decisions:** a cost, a transition (grievance and a loyalty test), and a 2-year lock. Gates that 07 tied to tech use the faction's situation instead, since tech comes after the playbox. **Democracy is only reachable at a leader's death.**
+- **Council approval:** councillors back or oppose each reform by their traits, and opposing costs loyalty when it's taken anyway. Under the Politburo, the Oligarchy and Democracy the council votes, and a majority against blocks it.
+- **Portraits by government stay parked.**
+
+**2026-09-27 (earned odds and pace; see 11-earned-odds-and-pace.md)**
+
+- **Preparation buys certainty and quality.** Odds are clamped to 5-98% (was 5-95%, set in 07 §4.3). A success's gains scale x0.8 to x1.2 with how cleanly the roll landed, and Triumph's share grows with the odds. No Disaster above 90% odds. Aimed ventures compare your crew with the defenders on site ("outnumber the defenders"). Rejected: a fixed success band, where preparing well bought *whether* but never *how well*.
+- **Odds can still change after you commit (the target can react, 07 §4.2), but never silently:** the planner warns when defenders could arrive, the outliner shows live odds, and the log says when and why the odds moved. Rejected for now: locking odds at launch, which would remove the reaction for a problem that transparency solves.
+- **Wounds scale with the venture's danger:** low-danger work wounds less often and for less time than raids and assaults. Deaths stay tied to Disasters, so mortality keeps its weight (pillar 4). Rejected: a flat 30% wound chance for 30-60 days on every setback, which punished careful play.
+- **Minor factions lose their authored personality** (raider, trader, hermit). What a faction is keen on comes from its traits, for minors and major factions alike (pillar 2). Rejected: keeping a separate personality flag next to the trait engine.
+- **The AI weighs building and ventures on one list,** so spending at home competes with expanding (pillar 3: the same weighted scoring). Expansion carries a running cost in materials as well as wealth. The pace target (about 65% of the city claimed at year one) is provisional until tuned in simulation.
+- **Tech stays after the playbox** (unchanged). Re-measure the pace once the shared AI budget and expansion costs are tuned.
+
+**2026-09-27 (raiders and deterrence; see 10-raiders-and-deterrence.md)**
+
+- **A raid is worth what the district is worth.** Loot scales with the target district's development and working buildings (x0.4 to x1.5), and the AI weighs raids by that worth. Bonus loot only on a Triumph. Rejected: loot from the victim's whole stockpile, which made a fresh claim as good a target as a capital.
+- **Raids have a per-district cooldown:** 30 days after a raid, 45 if it failed, 60 after a disaster, for all raiders. Rejected: a per-raider cooldown, which would let a second gang take its turn straight away.
+- **Threaten is a venture** (Command, odds from your strength and arms; success buys 45 days without raids, a triumph 90; a disaster emboldens them). **Pay tribute is a deal**, like gifts: no odds, always accepted. Rejected: Threaten as a diplomatic action, since it's risky and needs a leader, which is what the one-verb rule is for.
+- **Tribute is paid in food or materials, never wealth,** so a poor faction always has an answer. Pacts can be paid in wealth, food or materials. Raiders halve their willingness to sign pacts; tribute and threats are the raider answer. **A pact needs a shared border** (it only forbids raids, agitation and war, which all need one), and the AI only offers one to a stronger neighbour it has reason to fear. Rejected: pacts with anyone, which had every faction offering the player a pact before meeting them.
+- **Anyone can demand tribute** (AI plays by the player's rules). Refusing emboldens the demander (+20% raid odds for 60 days). The first demand from each faction is a pop-up; later ones go to Proposals.
+- **Raiding a built-up district (worth 1.0+) costs the raider -5 opinion with every neighbour of the victim.** An early piece of S6's aggression memory, taken now because it's small and it's what makes raiding rich targets cost reputation.
+- **Watchtower costs materials only** (25). Rejected: an emergency discount under threat, a hidden rule the player would have to discover.
+
 **2026-09-27 (wording only; no rule changed)**
 
 - **"Shared pool" means shared data, not a shared list.** Each faction has its own National Ambitions: which ones it can pursue depends on its traits, government, tech and situation, so factions see different lists. They are still written once in one data pool, not authored per faction (the 2026-09-25 amendment stands). Docs reworded to say this; National Ambitions and the renown review are S4, not S3 (stale references from the old build order fixed).

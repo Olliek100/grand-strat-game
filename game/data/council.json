@@ -7,6 +7,10 @@
 	},
 	"loyalty": {
 		"appointed": {"label": "Given a council seat", "decay": 0.04, "limit": 20},
+		"sworn_loyalty": {"label": "Sworn to the leader (Loyal Lieutenants)", "decay": 0.0, "limit": 10},
+		"reform_opposed": {"label": "Overruled on a reform", "decay": 0.03, "limit": 20},
+		"reform_backed": {"label": "Got the reform they wanted", "decay": 0.03, "limit": 10},
+		"purge_fear": {"label": "Saw a comrade purged", "decay": 0.05, "limit": 20},
 		"dismissed": {"label": "Removed from the council", "decay": 0.04, "limit": 30},
 		"passed_over": {"label": "Passed over for a seat", "decay": 0.05, "limit": 25},
 		"glory": {"label": "Led a triumph", "decay": 0.03, "limit": 20},

@@ -9,7 +9,7 @@ What changed in each build: `../CHANGELOG.md`. Design: `../Steering/` (start wit
 ## Play
 1. Open Godot 4.7, **Import**, and select `game/project.godot`. Press **F5**.
 2. **Space** pauses, **1-5** set the speed, **Esc** closes what's open or opens the menu (save, load, settings).
-3. **F1-F7** open the windows: Character, Council, Realm, Diplomacy, Economy, Log.
+3. **F1-F7** open the windows: Character, Council, Realm, Diplomacy, Ambitions, Economy, Log.
 
 ## How it plays
 **You start with problems, not goals.** Every faction begins with one shelter, short of food, with no weapons. The
@@ -18,6 +18,13 @@ alert icons under the top bar are your problems, worst first: hover to read, cli
 **Everything you do is a venture:** pick a district, pick a venture, choose who leads it, how many go and what you
 spend, then LAUNCH. Each has four outcomes (Triumph, Success, Setback, Disaster); hover the odds bar for the full
 working-out. Leaders improve, get wounded and die.
+
+**Routine work is your council's job:** scavenging, rebuilding, securing and guarding your own land are standing
+tasks. Give a councillor a task from their seat card (Council window) and pick the district on the map; they work it
+until it's done. Launch the rest yourself: scouting, settling, trade and every attack.
+
+**Choose a direction:** spend renown (from deeds and triumphs) on National Ambitions (F5); reform your government in
+the Realm window. Each government passes power on, and breaks, in its own way.
 
 **The loop:** food grows people and manpower; people pay taxes and eat food; materials (from ruins, trade and
 Recycling Works) build and settle. Nothing piles up for free: food spoils, big stockpiles leak, buildings wear.
@@ -59,7 +66,8 @@ Claude Code commands wrap these: `/test`, `/sim`, `/render`, `/design-check`, `/
 | `data/traits.json` | Faction traits: threshold, odds modifiers, effects, likes and dislikes |
 | `data/diplomacy.json`, `opinion_modifiers.json` | Diplomatic actions; named opinion memories |
 | `data/map.json`, `district_types.json` | The generated city layout; district type stats and art |
-| `data/ambitions.json`, `names.json` | Milestones; name pools |
+| `data/deeds.json`, `national_ambitions.json` | Deeds (milestones that pay renown); National Ambitions |
+| `data/governments.json`, `names.json` | Governments, their succession rules and reforms; name pools |
 
 Ventures are assembled from building blocks in `venture_system.gd` (targets, odds factors, effect ops). A venture
 made of existing blocks needs no code; typos show at startup (`GameData.validate()`).
@@ -79,7 +87,7 @@ made of existing blocks needs no code; typos show at startup (`GameData.validate
 | `tools/`, `tests/` | Map generator, balance sim, UI smoke, screenshots; regression tests |
 
 ## Known gaps
-- Governments, National Ambitions (milestones only so far), marriage between factions, tech: see `../Steering/08-spine.md`
+- Marriage between factions, choice events, childhood and education, tech: see `../Steering/08-spine.md`
 - Map art is procedural placeholder quality
 - One save slot; saves from older builds aren't migrated when the format changes
 - Under full fog, the log still reports rivals' actions you can't see
