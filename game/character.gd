@@ -35,6 +35,8 @@ var family: bool = false
 var dynasty: String = ""
 var parent_ids: Array = []
 var spouse_id: int = -1
+# Expecting a child, due on this day (0: not expecting)
+var due_day: int = 0
 # Loyalty from how much they respect the current leader (set by the city each month)
 var respect: float = 0.0
 var respect_label: String = ""
@@ -125,7 +127,7 @@ func to_dict() -> Dictionary:
 	return {"id": id, "faction": faction_id, "name": name, "age": age, "skills": skills.duplicate(),
 		"wounded_until": wounded_until, "committed_until": committed_until, "ventures_led": ventures_led, "triumphs": triumphs, "wounds": wounds,
 		"post": post, "traits": traits.duplicate(), "loyalty_mods": loyalty_mods.duplicate(true), "restless_warned": restless_warned,
-		"sex": sex, "is_leader": is_leader, "family": family, "dynasty": dynasty, "parent_ids": parent_ids.duplicate(), "spouse_id": spouse_id,
+		"sex": sex, "is_leader": is_leader, "family": family, "dynasty": dynasty, "parent_ids": parent_ids.duplicate(), "spouse_id": spouse_id, "due_day": due_day,
 		"respect": respect, "respect_label": respect_label, "ruling_since": ruling_since,
 		"rule_start": rule_start.duplicate(), "peace_days": peace_days, "death_day": death_day, "fate": fate}
 
@@ -142,6 +144,7 @@ static func from_dict(data: Dictionary) -> Character:
 	c.loyalty_mods = data["loyalty_mods"]
 	c.restless_warned = data["restless_warned"]
 	c.sex = data["sex"]
+	c.due_day = int(data["due_day"])
 	c.is_leader = data["is_leader"]
 	c.family = data["family"]
 	c.dynasty = data["dynasty"]

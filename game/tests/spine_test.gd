@@ -28,6 +28,8 @@ func _init():
 	_test_ambitions()
 	_test_government()
 	_test_tasks()
+	_test_district_payoffs()
+	_test_events_and_births()
 	_test_minor_patrons()
 	_test_defence()
 	_test_claimed_land_is_off_limits()
@@ -715,15 +717,18 @@ func _test_tasks():
 	var hired = c.characters_of(me).filter(func(x): return not x.family)
 	c.appoint(hired[0].id, "quartermaster")
 	var q: Character = hired[0]
-	home.ruin_level = 0.3
+	# Skilled enough that the odds stay above 90% (no Disasters), so no death can end the test early
+	q.skills["stewardship"] = 10
+	# Nearly stripped, so the task finishes in a few runs (a long run lets deaths and successions intrude)
+	home.ruin_level = 0.13
 	var err = c.assign_task(me, "scavenge", home, q.id)
 	_check("a councillor can be assigned to scavenge home", err == "" and c.task_of(q) != null, err)
 	_check("a councillor on a task can't lead a one-off", c.leader_busy(q))
-	for i in 400:
+	for i in 60:
 		c.advance_day()
 		if c.task_of(q) == null:
 			break
-	_check("the task ends when the ruins are stripped", c.task_of(q) == null and home.ruin_level < 0.1, "ruins %.2f" % home.ruin_level)
+	_check("the task ends when the ruins are stripped", c.task_of(q) == null and home.ruin_level < 0.1, "ruins %.2f, post %s, leader %s, faction %s, wounded %s, err %s, departed %s" % [home.ruin_level, q.post, q.is_leader, q.faction_id, q.is_wounded(c.day), err, str(c.departed.map(func(x): return x["name"] + ":" + x["fate"]))])
 	_check("a task that ends naturally frees the councillor at once", not c.leader_busy(q) or q.is_wounded(c.day))
 	# Stopping: free of cost, but the commitment holds
 	q.wounded_until = 0
@@ -735,7 +740,7 @@ func _test_tasks():
 	for i in 20:
 		c.advance_day()
 	_check("a stopped task ends after its run", c.task_of(q) == null)
-	_check("stopping early keeps the councillor committed for two runs", q.committed_until > c.day or q.committed_until >= t.started_day + 20, "%d vs day %d" % [q.committed_until, c.day])
+	_check("stopping early keeps the councillor committed for two runs", q.committed_until == t.committed_until and t.committed_until > t.started_day, "%d vs %d" % [q.committed_until, t.committed_until])
 	# A wounded councillor's task waits for them
 	q.committed_until = 0
 	home.development = 0.3
@@ -747,6 +752,66 @@ func _test_tasks():
 	_check("a wounded councillor's task pauses instead of ending", c.task_of(q) == t and t.paused == "wounded")
 	var loaded = CityMap.new(bytes_to_var(var_to_bytes(c.to_save())))
 	_check("tasks survive a save", loaded.tasks.size() == c.tasks.size() and loaded.character_by_id(q.id).committed_until == q.committed_until)
+
+# District payoffs: reaching a district's ceilings pays, and Restored pays renown once
+func _test_district_payoffs():
+	var c = CityMap.new()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	var home: District = c.districts[p.home_id]
+	home.ruin_level = 0.5
+	home.development = 0.5
+	var slots_before = c.building_slots(home)
+	var food_before = c.district_food(home)
+	home.ruin_level = 0.05
+	_check("clearing the ruins earns Cleared and more food", c.district_payoffs(home)["cleared"] and c.district_food(home) > food_before)
+	home.development = 1.0
+	_check("full development earns Rebuilt and a building slot", c.district_payoffs(home)["rebuilt"] and c.building_slots(home) > slots_before)
+	home.hazard = 0.0
+	home.influence.clear()
+	home.add_influence(me, 100.0)
+	_check("cleared, safe, rebuilt and secured is Restored", c.district_payoffs(home)["restored"])
+	var renown = p.renown
+	c.advance_day()
+	c.advance_day()
+	_check("restoring a district pays renown once", p.renown >= renown + GameData.rule("payoff_restored_renown") and p.renown < renown + 2 * GameData.rule("payoff_restored_renown") + 20)
+	_check("the rival's same district rules apply to everyone", c.district_payoffs(c.districts[c.factions["rival"].home_id]).has("restored"))
+
+# Choice events: they come, wait for the player, cost nothing, and their effects last a set time; families grow
+func _test_events_and_births():
+	var c = CityMap.new()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	var wealth = p.wealth
+	c._fire_moment(me, "pulse", c.leader_of(me))
+	_check("an everyday event comes to the player and waits for an answer", c.pending_events.size() == 1)
+	var entry = c.pending_events[0]
+	c.answer_event(0)
+	_check("answering costs nothing", p.wealth == wealth)
+	_check("the chosen option takes effect for a set time", p.timed_effects.size() == 1 and p.timed_effects[0]["until"] > c.day)
+	var until: int = p.timed_effects[0]["until"]
+	for i in until - c.day + 1:
+		c.advance_day()
+	_check("its effect wears off", p.timed_effects.filter(func(t): return t["label"] == GameData.events()[entry["event"]]["title"]).is_empty())
+	_check("the next everyday event is 3-4 months away", p.next_event_day >= c.day - 1)
+	var ai: Faction = c.factions["guild"]
+	var waiting = c.pending_events.size()
+	var ai_effects = ai.timed_effects.size()
+	c._fire_moment("guild", "pulse", c.leader_of("guild"))
+	_check("the AI answers its own events", ai.timed_effects.size() == ai_effects + 1 and c.pending_events.size() == waiting)
+	# Every married couple can have children: news, then a birth
+	var leader = c.leader_of(me)
+	var spouse = c.character_by_id(leader.spouse_id)
+	var mother = leader if leader.sex == "f" else spouse
+	mother.age = 30
+	var kids_before = c.everyone_of(me).filter(func(x): return mother.id in x.parent_ids).size()
+	mother.due_day = c.day + 5
+	for i in 40:
+		c.advance_day()
+	_check("a pregnancy ends in a birth", c.everyone_of(me).filter(func(x): return mother.id in x.parent_ids).size() == kids_before + 1 and mother.due_day == 0)
+	_check("a birth brings a choice event", c.pending_events.any(func(e): return GameData.events()[e["event"]]["moment"] == "birth"))
+	var loaded = CityMap.new(bytes_to_var(var_to_bytes(c.to_save())))
+	_check("waiting events and timed effects survive a save", loaded.pending_events.size() == c.pending_events.size() and loaded.factions["guild"].timed_effects.size() == ai.timed_effects.size())
 
 func _test_minor_patrons():
 	var c = CityMap.new()

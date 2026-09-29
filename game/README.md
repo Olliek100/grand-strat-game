@@ -23,6 +23,8 @@ working-out. Leaders improve, get wounded and die.
 tasks. Give a councillor a task from their seat card (Council window) and pick the district on the map; they work it
 until it's done. Launch the rest yourself: scouting, settling, trade and every attack.
 
+**Your people:** every few months something happens to your family or crew (a birth, a death, a coming of age, a quarrel) and you choose how to answer. Choices cost nothing; each gives a buff or a debuff for a while (see the outliner's Effects). Married couples have children, and districts you fully clear, secure and rebuild pay you back (Cleared, Safe, Rebuilt, Restored).
+
 **Choose a direction:** spend renown (from deeds and triumphs) on National Ambitions (F5); reform your government in
 the Realm window. Each government passes power on, and breaks, in its own way.
 
@@ -68,6 +70,7 @@ Claude Code commands wrap these: `/test`, `/sim`, `/render`, `/design-check`, `/
 | `data/map.json`, `district_types.json` | The generated city layout; district type stats and art |
 | `data/deeds.json`, `national_ambitions.json` | Deeds (milestones that pay renown); National Ambitions |
 | `data/governments.json`, `names.json` | Governments, their succession rules and reforms; name pools |
+| `data/events.json` | Choice events: when they come, their options and timed effects |
 
 Ventures are assembled from building blocks in `venture_system.gd` (targets, odds factors, effect ops). A venture
 made of existing blocks needs no code; typos show at startup (`GameData.validate()`).
@@ -87,7 +90,7 @@ made of existing blocks needs no code; typos show at startup (`GameData.validate
 | `tools/`, `tests/` | Map generator, balance sim, UI smoke, screenshots; regression tests |
 
 ## Known gaps
-- Marriage between factions, choice events, childhood and education, tech: see `../Steering/08-spine.md`
+- Marriage, childhood and education, traits that grow with use, tech: see `../Steering/08-spine.md`
 - Map art is procedural placeholder quality
 - One save slot; saves from older builds aren't migrated when the format changes
 - Under full fog, the log still reports rivals' actions you can't see

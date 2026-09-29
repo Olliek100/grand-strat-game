@@ -117,6 +117,11 @@ var district_pages: Dictionary = {}
 var district_tab_buttons: Dictionary = {}
 var district_tab: String = "district"
 var event_popup: PanelContainer
+# The choice event pop-up: title, text and one button per option
+var choice_popup: PanelContainer
+var choice_title: Label
+var choice_text: RichTextLabel
+var choice_options: VBoxContainer
 var event_title: Label
 var event_text: RichTextLabel
 var event_open: Button
@@ -197,10 +202,18 @@ func _process(delta: float):
 		day_timer -= SECONDS_PER_DAY[speed]
 		city.advance_day()
 		advanced = true
+		# A choice event waits for your answer: the clock stops until you give it
+		if not city.pending_events.is_empty():
+			_show_choice()
+			break
 	if advanced:
 		_refresh()
 
 func _set_paused(value: bool):
+	# The clock can't run while a choice event waits for an answer
+	if not value and city and not city.pending_events.is_empty():
+		_show_choice()
+		return
 	paused = value
 	day_timer = 0.0
 	_refresh_top_bar()
@@ -256,6 +269,7 @@ func _build_ui():
 	_explain_windows()
 
 	_build_event_popup()
+	_build_choice_popup()
 	_build_game_menu()
 	character_menu = PopupMenu.new()
 	character_menu.id_pressed.connect(func(id): if character_menu_actions.has(id): character_menu_actions[id].call())
@@ -588,6 +602,73 @@ func _set_map_mode(key: String):
 
 # --- Event pop-ups: the big moments, one at a time -----------------------------------------
 
+# Choice events: a decision about your people, with 2-4 options; each option's effects show under its button
+func _build_choice_popup():
+	choice_popup = _panel(0.98)
+	choice_popup.set_anchors_preset(Control.PRESET_CENTER)
+	choice_popup.custom_minimum_size = Vector2(520, 0)
+	choice_popup.visible = false
+	add_child(choice_popup)
+	var box = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	choice_popup.add_child(box)
+	choice_title = Label.new()
+	choice_title.add_theme_font_size_override("font_size", 20)
+	choice_title.add_theme_color_override("font_color", Color(0.9, 0.78, 0.5))
+	box.add_child(choice_title)
+	choice_text = _rich()
+	choice_text.custom_minimum_size.x = 500
+	box.add_child(choice_text)
+	choice_options = VBoxContainer.new()
+	choice_options.add_theme_constant_override("separation", 6)
+	box.add_child(choice_options)
+
+# Shows the first waiting choice event (and pauses)
+func _show_choice():
+	if city.pending_events.is_empty():
+		choice_popup.visible = false
+		return
+	# News first (a death, a war): the choice follows once it's read
+	if event_popup.visible:
+		paused = true
+		return
+	paused = true
+	_refresh_top_bar()
+	var entry = city.pending_events[0]
+	var ev = GameData.events()[entry["event"]]
+	choice_title.text = ev["title"]
+	choice_text.text = city.event_text(entry)
+	for child in choice_options.get_children():
+		child.queue_free()
+	var options: Array = ev["options"]
+	for i in options.size():
+		var index = i
+		var b = _button(options[i]["label"], func(): _on_choice(index))
+		choice_options.add_child(b)
+		var effect = _rich()
+		effect.custom_minimum_size.x = 500
+		effect.text = "[color=#999999]%s[/color]" % city.event_option_text(options[i], entry["venture"])
+		choice_options.add_child(effect)
+	choice_popup.visible = true
+	_place_choice.call_deferred()
+
+# Sized and centred once its contents have laid out
+func _place_choice():
+	# Shrink to the contents (twice: rich text settles its height a frame late)
+	choice_popup.size = Vector2.ZERO
+	choice_popup.reset_size()
+	await get_tree().process_frame
+	choice_popup.size = Vector2.ZERO
+	choice_popup.reset_size()
+	choice_popup.position = ((get_viewport_rect().size - choice_popup.size) * 0.5).max(Vector2.ZERO)
+
+func _on_choice(index: int):
+	city.answer_event(index)
+	choice_popup.visible = false
+	if not city.pending_events.is_empty():
+		_show_choice()
+	_refresh()
+
 func _build_event_popup():
 	event_popup = _panel(0.98)
 	event_popup.set_anchors_preset(Control.PRESET_CENTER)
@@ -633,6 +714,9 @@ func _next_event():
 
 func _close_event():
 	_next_event()
+	# A choice waiting behind the news comes next
+	if not event_popup.visible and not city.pending_events.is_empty():
+		_show_choice()
 
 # --- Game menu (Esc) ---------------------------------------------------------------------
 
@@ -833,6 +917,12 @@ func _on_link_clicked(meta):
 func _refresh_outliner():
 	var me = city.player_id
 	var lines = []
+	# What your choices in events are doing right now, and for how long
+	var timed = _player().timed_effects
+	if not timed.is_empty():
+		lines.append("[b]Effects (%d)[/b]" % timed.size())
+		for t in timed:
+			lines.append("[hint=\"%s\"]%s[/hint] [color=#999999]%s, %dd[/color]" % [t["summary"], t["label"], String(t["choice"]).to_lower(), t["until"] - city.day])
 	# Standing tasks first: who works where, and how far there is to go
 	var my_tasks = city.tasks.filter(func(t): return t.faction_id == me)
 	if not my_tasks.is_empty():
@@ -1389,6 +1479,8 @@ func _unhandled_input(event: InputEvent):
 
 func _refresh():
 	var economy = city.daily_economy(city.player_id)
+	if not city.pending_events.is_empty() and not choice_popup.visible and not event_popup.visible:
+		_show_choice()
 	_refresh_top_bar()
 	_refresh_alerts(economy)
 	_refresh_outliner()
@@ -2686,7 +2778,7 @@ func _refresh_character():
 			status += "  ·  [color=%s]Loyalty %d[/color]" % [_loyalty_color(c.loyalty()), c.loyalty()]
 			tip.append(_loyalty_tip(c))
 	elif alive:
-		status = "  ·  [color=#999999]of age in %d years[/color]" % (16 - c.age)
+		status = ""
 	char_name.text = "[font_size=18][b]%s[/b][/font_size]\n%s\n[color=#999999]House %s · %d[/color]%s" % [c.name, _role_text(c),
 		c.dynasty if c.dynasty != "" else c.name.get_slice(" ", 1), c.age, status]
 	char_name.tooltip_text = "\n\n".join(tip)
@@ -2807,7 +2899,7 @@ func _rebuild_character(c: Character, rel: Dictionary, heir: Character, mine: bo
 
 # --- District panel: the numbers you decide with; the reasons on hover ---------------------------
 
-const STAT_KEYS = ["control", "people", "grievance", "food", "manpower", "defence", "raid_safe", "danger", "ruins", "development", "buildings"]
+const STAT_KEYS = ["control", "payoffs", "people", "grievance", "food", "manpower", "defence", "raid_safe", "danger", "ruins", "development", "buildings"]
 
 func _build_district_panel():
 	district_panel = _panel(0.95)
@@ -2938,6 +3030,16 @@ func _refresh_district_info():
 		_stat("control", true, "Their control %d" % d.share(owner), "The %s's hold on it. Take it by war (Assault) or by agitating it into revolt.%s" % [city.faction_name(owner), share_text])
 	else:
 		_stat("control", true, "Claim %d/%d" % [d.share(p.id), claim], "Unclaimed: pays nobody. Scout it, Scavenge it (+3 influence each), then Settle it (+30; the settlers stay). %d influence claims it.%s" % [claim, share_text])
+	# What this district has earned by reaching its ceilings, and what's still missing
+	var pay = city.district_payoffs(d)
+	var earned = ["cleared", "safe", "rebuilt"].filter(func(k): return pay[k]).map(func(k): return k.capitalize())
+	var pay_lines = [
+		("✓ " if pay["cleared"] else "✗ ") + "Cleared: ruins under 10%% (now %d%%) → food +%d%% here" % [d.ruin_level * 100, (GameData.rule("payoff_cleared_food") - 1.0) * 100],
+		("✓ " if pay["safe"] else "✗ ") + "Safe: no danger (now %d%%) → manpower +%d%% here" % [city.danger(d) * 100, (GameData.rule("payoff_safe_manpower") - 1.0) * 100],
+		("✓ " if pay["rebuilt"] else "✗ ") + "Rebuilt: development 100%% (now %d%%) → +%d building slot" % [d.development * 100, GameData.rule("payoff_rebuilt_slots")],
+		("✓ " if pay["restored"] else "✗ ") + "Restored: all three and Secured → taxes and housing +%d%%, +%d renown the first time" % [(GameData.rule("payoff_restored_mult") - 1.0) * 100, GameData.rule("payoff_restored_renown")]]
+	_stat("payoffs", d.owner_id() != "" and known, "Restored" if pay["restored"] else (" · ".join(earned) if not earned.is_empty() else "No payoffs yet"),
+		"What this district pays for reaching its ceilings:\n" + "\n".join(pay_lines), Color(0.95, 0.8, 0.4) if pay["restored"] else (Color(0.55, 0.85, 0.55) if not earned.is_empty() else Color(0.6, 0.6, 0.6)))
 	_stat("people", known, "People %d/%d" % [d.population, city.housing(d)], "Population %d; housing for %d (Rebuild adds room).\nPeople grow with food, pay taxes and eat food." % [d.population, city.housing(d)])
 	_stat("grievance", known, "Grievance %d" % d.grievance, "Unrest %d of 100. Above 65 it's restless; above 80 it can revolt.\nRelief calms it; raids, war and a cruel rule stir it." % d.grievance,
 		Color(0.55, 0.85, 0.55) if d.grievance < 40 else (Color(0.95, 0.72, 0.3) if d.grievance < 65 else Color(0.95, 0.45, 0.4)))

@@ -1,0 +1,126 @@
+{
+	"of_age": {
+		"title": "Of Age", "moment": "coming_of_age", "weight": 1.0,
+		"text": "{name} turns sixteen today and takes a place in the crew. The whole shelter knows it. How do you mark it?",
+		"options": [
+			{"label": "A feast in their honour", "days": 60,
+				"effects": {"diplomacy_mult": 1.1, "wealth_income_mult": 0.9}, "ai_goal": "buy"},
+			{"label": "Straight to work", "days": 90,
+				"effects": {"scavenge_yield_mult": 1.15}, "ai_goal": "materials"},
+			{"label": "Out on patrol with the fighters", "days": 90,
+				"effects": {"defence_mult": 0.9, "food_mult": 0.95}, "ai_goal": "defend"}
+		]
+	},
+	"new_child": {
+		"title": "A Child Is Born", "moment": "birth", "weight": 1.0,
+		"text": "{name} is born to the family. In a city like this one, every birth is a small act of defiance.",
+		"options": [
+			{"label": "Celebrate with everyone", "days": 60,
+				"effects": {"owned_daily_grievance": -0.03, "wealth_income_mult": 0.95}, "ai_goal": "stabilize"},
+			{"label": "Keep the family close", "days": 180,
+				"effects": {"heir_claim": 10, "diplomacy_mult": 0.95}, "ai_goal": "control"}
+		]
+	},
+	"mourning": {
+		"title": "Mourning", "moment": "death", "weight": 1.0,
+		"text": "{name} is dead. The crew looks to you for how to grieve.",
+		"options": [
+			{"label": "A proper funeral", "days": 60,
+				"effects": {"owned_daily_grievance": -0.04, "food_mult": 0.95}, "ai_goal": "stabilize"},
+			{"label": "No time to grieve", "days": 60,
+				"effects": {"scavenge_yield_mult": 1.1, "owned_daily_grievance": 0.03}, "ai_goal": "materials"}
+		]
+	},
+	"glory": {
+		"title": "Glory", "moment": "venture_triumph", "weight": 1.0,
+		"text": "{name} came back from the {venture} with a triumph, and the whole crew is talking about it.",
+		"options": [
+			{"label": "Let the crew celebrate", "days": 60,
+				"effects": {"crew_cap_mult": 1.1, "food_mult": 0.95}, "ai_goal": "expand"},
+			{"label": "Press the advantage", "days": 60,
+				"venture_odds": {"$venture": 1.1}, "ai_goal": "harass"}
+		]
+	},
+	"hard_loss": {
+		"title": "A Hard Loss", "moment": "venture_disaster", "weight": 1.0,
+		"text": "The {venture} led by {name} ended in disaster. People are asking whose fault it was.",
+		"options": [
+			{"label": "Honour the fallen", "days": 60,
+				"effects": {"owned_daily_grievance": -0.03}, "ai_goal": "stabilize"},
+			{"label": "Study what went wrong", "days": 90,
+				"venture_odds": {"$venture": 1.1}, "effects": {"wealth_income_mult": 0.95}, "ai_goal": "develop"}
+		]
+	},
+	"rats": {
+		"title": "Rats in the Stores", "moment": "pulse", "weight": 1.0,
+		"text": "Rats have got into the food stores. Some of it can still be saved, if you're not too fussy.",
+		"options": [
+			{"label": "Burn the infested stock", "days": 30,
+				"effects": {"food_mult": 0.9, "owned_daily_grievance": -0.02}, "ai_goal": "stabilize"},
+			{"label": "Set traps and hope", "days": 90,
+				"effects": {"food_mult": 0.95}, "ai_goal": "food"}
+		]
+	},
+	"stranger_with_maps": {
+		"title": "A Stranger with Maps", "moment": "pulse", "weight": 1.0,
+		"text": "A drifter offers hand-drawn maps of the ruins beyond your border, and asks for shelter in return.",
+		"options": [
+			{"label": "Take them in", "days": 90,
+				"venture_odds": {"scout": 1.2}, "effects": {"defence_mult": 1.05}, "ai_goal": "scout"},
+			{"label": "Turn them away", "days": 60,
+				"effects": {"defence_mult": 0.95}, "ai_goal": "defend"}
+		]
+	},
+	"market_rumours": {
+		"title": "Market Rumours", "moment": "pulse", "weight": 1.0,
+		"text": "Rumours are running through the markets: someone is hoarding, someone is cheating. Traders are nervous.",
+		"options": [
+			{"label": "Spread rumours of your own", "days": 60,
+				"effects": {"trade_income_mult": 1.2, "diplomacy_mult": 0.9}, "ai_goal": "income"},
+			{"label": "Stay out of it", "days": 90,
+				"effects": {"diplomacy_mult": 1.05}, "ai_goal": "buy"}
+		]
+	},
+	"council_quarrel": {
+		"title": "A Quarrel on the Council", "moment": "pulse", "weight": 1.0,
+		"text": "Your councillors are at each other's throats: the fighters want more, the builders want peace.",
+		"options": [
+			{"label": "Side with the fighters", "days": 60,
+				"skill_odds": {"command": 1.1, "stewardship": 0.95}, "ai_goal": "harass"},
+			{"label": "Side with the builders", "days": 60,
+				"skill_odds": {"stewardship": 1.1, "command": 0.95}, "ai_goal": "develop"},
+			{"label": "Knock heads together", "days": 120,
+				"effects": {"split_chance_mult": 0.9, "wealth_income_mult": 0.95}, "ai_goal": "stabilize"}
+		]
+	},
+	"fever": {
+		"title": "Fever in the Shelters", "moment": "pulse", "weight": 1.0,
+		"text": "A fever is spreading through the crowded shelters.",
+		"options": [
+			{"label": "Quarantine the sick", "days": 60,
+				"effects": {"crew_cap_mult": 0.9, "owned_daily_grievance": -0.02}, "ai_goal": "stabilize"},
+			{"label": "Keep everyone working", "days": 60,
+				"effects": {"scavenge_yield_mult": 1.05, "owned_daily_grievance": 0.04}, "ai_goal": "materials"}
+		]
+	},
+	"cache_of_tools": {
+		"title": "A Cache of Tools", "moment": "pulse", "weight": 1.0,
+		"text": "Your crew has found a sealed cache of tools: saws, jacks, a working generator.",
+		"options": [
+			{"label": "Share them out", "days": 90,
+				"effects": {"scavenge_yield_mult": 1.2}, "ai_goal": "materials"},
+			{"label": "Trade them on", "days": 60,
+				"effects": {"wealth_income_mult": 1.2}, "ai_goal": "income"}
+		]
+	},
+	"hot_blooded_youths": {
+		"title": "Hot-Blooded Youths", "moment": "pulse", "weight": 1.0,
+		"text": "The young ones are restless and want a fight. They'll find one, with or without you.",
+		"options": [
+			{"label": "Train them", "days": 90,
+				"venture_odds": {"raid": 1.1, "assault": 1.1}, "effects": {"food_mult": 0.95}, "ai_goal": "harass"},
+			{"label": "Put them to building", "days": 60,
+				"effects": {"scavenge_yield_mult": 1.1, "owned_daily_grievance": 0.02}, "ai_goal": "develop"}
+		]
+	}
+}

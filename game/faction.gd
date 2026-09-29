@@ -51,6 +51,12 @@ var government: String = "warlord"
 var reform_locked_until: int = 0
 var caretaker_until: int = 0
 var last_succession_day: int = -1000
+# Timed effects from choice events: [{"label", "summary", "until", "effects": {name: value}, "venture_odds": {}, "skill_odds": {}}]
+var timed_effects: Array = []
+# The next day a choice event may come to this faction (the everyday pulse, every 3-4 months)
+var next_event_day: int = 90
+# The day each event last came to this faction (so everyday ones don't repeat soon)
+var event_last: Dictionary = {}
 # Counts that some deeds measure
 var stats: Dictionary = {"districts_conquered": 0, "wars_won": 0, "buildings_built": 0}
 # Character id the leader has chosen as heir (-1: the usual order of succession)
@@ -104,6 +110,10 @@ func effect(effect_name: String) -> float:
 		var value = GameData.national_ambition(id)["bonus"].get("effects", {}).get(effect_name)
 		if value != null:
 			total = total * value if multiplicative else total + value
+	for timed in timed_effects:
+		var value = timed.get("effects", {}).get(effect_name)
+		if value != null:
+			total = total * value if multiplicative else total + value
 	var from_government = GameData.government(government)["effects"].get(effect_name)
 	if from_government != null:
 		total = total * from_government if multiplicative else total + from_government
@@ -117,6 +127,9 @@ func effects_with_labels(effect_name: String) -> Array:
 		var def = GameData.national_ambition(id)
 		if def["bonus"].get("effects", {}).has(effect_name):
 			found.append([def["label"], def["bonus"]["effects"][effect_name]])
+	for timed in timed_effects:
+		if timed.get("effects", {}).has(effect_name):
+			found.append([timed["label"], timed["effects"][effect_name]])
 	var gov = GameData.government(government)
 	if gov["effects"].has(effect_name):
 		found.append([gov["label"], gov["effects"][effect_name]])
@@ -129,6 +142,12 @@ func venture_factors(venture_id: String) -> Array:
 		var def = GameData.national_ambition(id)
 		if def["bonus"].get("venture_odds", {}).has(venture_id):
 			factors.append([def["label"], def["bonus"]["venture_odds"][venture_id]])
+	for timed in timed_effects:
+		if timed.get("venture_odds", {}).has(venture_id):
+			factors.append([timed["label"], timed["venture_odds"][venture_id]])
+		var timed_skill: String = GameData.venture(venture_id)["skill"]
+		if timed.get("skill_odds", {}).has(timed_skill):
+			factors.append([timed["label"], timed["skill_odds"][timed_skill]])
 	var gov = GameData.government(government)
 	if gov.get("venture_odds", {}).has(venture_id):
 		factors.append([gov["label"], gov["venture_odds"][venture_id]])
@@ -155,7 +174,7 @@ func pay(costs: Dictionary):
 func to_dict() -> Dictionary:
 	return {
 		"id": id, "name": display_name, "color": color.to_html(false), "player": is_player,
-		"manpower": manpower, "supplies": supplies, "materials": materials, "arms": arms, "wealth": wealth, "starving": starving, "broke": broke, "home_id": home_id, "renown": renown, "reputation": reputation, "deeds_done": deeds_done.duplicate(), "ambition": ambition, "ambition_days_left": ambition_days_left, "ambitions_done": ambitions_done.duplicate(), "ambitions_closed": ambitions_closed.duplicate(), "government": government, "reform_locked_until": reform_locked_until, "caretaker_until": caretaker_until, "last_succession_day": last_succession_day, "stats": stats.duplicate(), "scouted": scouted.duplicate(), "disrepair": disrepair, "minor": minor, "blurb": blurb, "designated_heir": designated_heir, "lean": lean.duplicate(),
+		"manpower": manpower, "supplies": supplies, "materials": materials, "arms": arms, "wealth": wealth, "starving": starving, "broke": broke, "home_id": home_id, "renown": renown, "reputation": reputation, "deeds_done": deeds_done.duplicate(), "ambition": ambition, "ambition_days_left": ambition_days_left, "ambitions_done": ambitions_done.duplicate(), "ambitions_closed": ambitions_closed.duplicate(), "government": government, "reform_locked_until": reform_locked_until, "caretaker_until": caretaker_until, "last_succession_day": last_succession_day, "timed_effects": timed_effects.duplicate(true), "next_event_day": next_event_day, "event_last": event_last.duplicate(), "stats": stats.duplicate(), "scouted": scouted.duplicate(), "disrepair": disrepair, "minor": minor, "blurb": blurb, "designated_heir": designated_heir, "lean": lean.duplicate(),
 		"traits": traits.to_dict(), "ai": ai.to_dict() if ai else {},
 	}
 
@@ -180,6 +199,9 @@ static func from_dict(data: Dictionary) -> Faction:
 	f.reform_locked_until = int(data["reform_locked_until"])
 	f.caretaker_until = int(data["caretaker_until"])
 	f.last_succession_day = int(data["last_succession_day"])
+	f.timed_effects = data["timed_effects"]
+	f.next_event_day = int(data["next_event_day"])
+	f.event_last = data["event_last"]
 	f.stats = data["stats"]
 	f.stats["buildings_built"] = f.stats.get("buildings_built", 0)
 	f.scouted = data["scouted"]

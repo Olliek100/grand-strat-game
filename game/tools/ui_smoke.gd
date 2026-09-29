@@ -65,6 +65,10 @@ func _process(delta):
 					_refresh()
 					_on_launch_pressed()
 				break
+	# A choice event: the pop-up, then answering it
+	city.pending_events.append({"event": "rats", "subject": "Test", "venture": ""})
+	_show_choice()
+	_on_choice(0)
 	_cancel_task_pick()
 	_refresh()
 	print("UI SMOKE OK")

@@ -2,6 +2,28 @@
 
 What each build changed, its tuning numbers and simulation results, newest first. Design decisions that still stand are in Steering/04-decision-log.md. From v1.38 on, each build is a git tag.
 
+**2026-09-29 (v1.41, district payoffs; choice events and births: doc 14 slice 1)**
+
+- **Choice events** (data/events.json, 12 to start). A pop-up with 2-4 options that **cost nothing**: each gives a timed buff or debuff to one part of the game (food, scavenging, trade, treaty odds, defence, manpower limit, grievance, the heir's claim, split chance, or a kind of venture), written out under its button ("Food -10%, grievance a day -0.02, for 30 days"). The game waits for your answer.
+  - **When they come:** coming of age (16), a birth, a death in the family or on the council, a venture's triumph or disaster, and an everyday event about every 3-4 months (rats in the stores, a stranger with maps, a quarrel on the council, a fever, a cache of tools...). Everyday events don't repeat within two years.
+  - **Effects in force** show in the outliner's new **Effects** section (hover for the full text) with the days left.
+  - **The AI answers its own events** by the same visible leanings (its traits), so its choices shape it too.
+- **Births for every married couple,** not just the leader: a pregnancy ("X is expecting"), then about nine months later a birth, which brings a choice event. Up to 4 children per couple; 6% a month while the mother is under 45 (was 3%, leader's couple only). About 7-8 births per 4 years across all factions (was 3), until marriage adds more couples.
+- **A child's card** no longer says "of age in N years"; coming of age is an event.
+- **Fixed on the way:** a child due after its father had died was never born.
+- **Result (3 games x 4 years):** the player gets about 14-17 choice events in 4 years (one every 3 months or so); 7-8 births per game; civil wars 0-1 a game; one purge and one bribe seen. **Watch:** the Pale Riders (a minor) went broke for 211 days and hungry for 65-73 days in two of three games. Speed wasn't comparable this run (the machine was in a slow spell).
+
+- **Playtest:** "no district buffs for removing all danger and all ruins, maxing development"; only two buildings ever.
+- **District payoffs** (the same for every faction), shown as a chip on the district panel (hover: each step ticked or crossed, with what's missing):
+  - **Cleared** (ruins under 10%): food +15% there.
+  - **Safe** (danger none): manpower +20% there.
+  - **Rebuilt** (development 100%): one more building slot.
+  - **Restored** (all three, and Secured): taxes and housing +20% there, and +5 renown the first time its owner restores it. The map shows "Restored" in place of "Secured".
+- **Safeguard the Shelter carries on until danger is gone,** not just until control 95, so a district can be made fully Safe (as a task it stops at "fully under your control, and safe").
+- **Result (2 games x 4 years):** districts Restored at years 1-4: 2-3, 8-10, 17, 19-20 (of 61) before the Safeguard fix, when Safe was the bottleneck (about 22 districts ever Safe). Longest hunger 19-37 days.
+- **Docs:** Steering/14-characters-first.md (the characters-first direction, partly decided: choice events cost nothing and give timed buffs or debuffs; children's development visible; events every 3-4 months). The CK2/CK3 research is in 06-paradox-reference-notes.md.
+- Saves from v1.40 won't load (save version 8).
+
 **2026-09-28 (v1.40, spine S4: choices; see Steering/12-choices-ambitions-and-government.md)**
 
 - **Standing tasks** (Steering/13-standing-tasks.md): routine work on your own land is now a councillor's task, not a one-off launch.

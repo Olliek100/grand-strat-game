@@ -71,6 +71,8 @@ func _setup(scenario: String):
 			_open_window("ambitions", "deeds")
 		"government":
 			_open_window("realm", "government")
+		"choice":
+			city.pending_events.append({"event": "council_quarrel", "subject": city.leader_of(me).name, "venture": ""})
 		"menu":
 			_toggle_game_menu()
 		"event":
@@ -78,3 +80,5 @@ func _setup(scenario: String):
 	# Hold the clock, so nothing new (a first contact opening Diplomacy) happens before the capture
 	_set_paused(true)
 	_refresh()
+	if name == "choice":
+		_show_choice()

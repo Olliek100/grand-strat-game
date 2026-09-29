@@ -2,6 +2,15 @@
 
 Decisions that still stand: each with what was rejected and why. New entries go at the top. Check this before relitigating a settled question. Per-build detail (numbers, tuning, simulation results) is in /CHANGELOG.md.
 
+**2026-09-29 (characters first; see 14-characters-first.md, partly decided)**
+
+- **Direction: the dynasty becomes the reason to play and replay; the territory is its stage.** Doc 14 revises the spine's priority (the one-sentence wording is still open). Rejected: carrying on adding territory and economy systems, which playtests say don't bring players back.
+- **Choice events cost nothing to answer.** Each option is a decision whose effect is a timed buff or debuff to a specific system; no resources are paid to pick one. The player sees one every 3-4 months at the start.
+- **Children's development is visible** on their panel (skills rising, traits emerging, the upbringing shaping them), settling at 16. Rejected: hiding it until a reveal.
+- **Choice events sit next to ventures as a second core pattern** (built in v1.41): ventures are how you act in the world; events are decisions about your people that come to you. They can't launch anything the venture system doesn't. Content lives in data/events.json. The game waits for the player's answer; the AI answers its own by its traits.
+- **Every married couple can have children,** with a pregnancy and a birth event (6% a month, up to 4 children). Rejected: births for the leader's couple only, at a rate too low for a family to grow in a run.
+- **District payoffs:** a district that reaches its ceilings pays for it. Cleared (ruins under 10%): more food. Safe (danger none): more manpower. Rebuilt (development maxed): one more building slot. All three plus Secured makes it **Restored**: more taxes and housing, and renown the first time. The same for every faction.
+
 **2026-09-29 (standing tasks; see 13-standing-tasks.md)**
 
 - **Routine ventures on your own land become standing tasks:** Scavenge, Rebuild, Safeguard the Shelter, Secure Food, Relief, Gather Weapons and Reinforce. A councillor is assigned to a district and works it venture after venture until the district's own state says it's done (ruins stripped, fully rebuilt, fully controlled, food sources worked, calm, armoury full, threat gone). Every run is still a venture with the same odds and outcomes (pillar 1). The rule of thumb: the system takes actions, the player makes decisions. Rejected: launching every routine venture by hand (too many clicks for no decision), and queues or automatic reassignment (the player decides every assignment).

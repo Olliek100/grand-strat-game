@@ -502,7 +502,7 @@ func _land_blocks(faction_id: String) -> Array:
 func _status_label(d: District) -> String:
 	var owner = d.owner_id()
 	if owner != "":
-		return d.get_control_status().capitalize()
+		return "Restored" if city.district_payoffs(d)["restored"] else d.get_control_status().capitalize()
 	if not city.knows(city.player_id, d):
 		return "Unscouted"
 	var best = 0.0

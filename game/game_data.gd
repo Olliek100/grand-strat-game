@@ -50,6 +50,9 @@ static func national_ambitions() -> Dictionary:
 static func national_ambition(id: String) -> Dictionary:
 	return national_ambitions()[id]
 
+static func events() -> Dictionary:
+	return _load("events")
+
 static func governments() -> Dictionary:
 	return _load("governments")
 
@@ -193,6 +196,24 @@ static func validate() -> Array:
 				problems.append("National ambition '%s' closes unknown ambition '%s'" % [id, other])
 		if amb.get("ai_goal") not in FactionAI.GOALS:
 			problems.append("National ambition '%s' has unknown ai_goal '%s'" % [id, amb.get("ai_goal")])
+	for id in events():
+		var ev: Dictionary = events()[id]
+		if ev.get("moment") not in CityMap.EVENT_MOMENTS:
+			problems.append("Event '%s' has unknown moment '%s'" % [id, ev.get("moment")])
+		if ev.get("options", []).size() < 2:
+			problems.append("Event '%s' needs at least two options" % id)
+		for option in ev.get("options", []):
+			for key in ["label", "days", "ai_goal"]:
+				if not option.has(key):
+					problems.append("Event '%s' has an option missing '%s'" % [id, key])
+			for name in option.get("effects", {}):
+				if name not in CityMap.EVENT_EFFECTS:
+					problems.append("Event '%s' has unknown effect '%s'" % [id, name])
+			for venture_id in option.get("venture_odds", {}):
+				if venture_id != "$venture" and not ventures().has(venture_id):
+					problems.append("Event '%s' changes odds for unknown venture '%s'" % [id, venture_id])
+			if option.get("ai_goal") not in FactionAI.GOALS:
+				problems.append("Event '%s' has an option with unknown ai_goal '%s'" % [id, option.get("ai_goal")])
 	for id in governments():
 		var gov: Dictionary = governments()[id]
 		for key in ["label", "description", "succession", "heir_rule", "effects", "ai_goal"]:

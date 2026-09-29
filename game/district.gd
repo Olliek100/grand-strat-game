@@ -17,6 +17,8 @@ var food_yield: float = 0.0
 var hazard: float = 0.15
 # No raids here before this day: raiders pull back after a raid, longer after a failed one
 var raid_safe_until: int = 0
+# The faction that was last paid renown for restoring this district ("" if nobody yet): paid once per owner
+var restored_by: String = ""
 
 # Map shape
 var polygon: PackedVector2Array
@@ -104,7 +106,7 @@ func to_dict() -> Dictionary:
 	return {
 		"influence": influence.duplicate(), "population": population, "grievance": grievance,
 		"ruin_level": ruin_level, "development": development, "unrest_warned": unrest_warned,
-		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard, "raid_safe_until": raid_safe_until,
+		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard, "raid_safe_until": raid_safe_until, "restored_by": restored_by,
 	}
 
 func load_dict(data: Dictionary):
@@ -118,3 +120,4 @@ func load_dict(data: Dictionary):
 	food_yield = data["food_yield"]
 	hazard = data["hazard"]
 	raid_safe_until = data["raid_safe_until"]
+	restored_by = data["restored_by"]

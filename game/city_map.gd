@@ -10,7 +10,7 @@ signal first_contact(faction_id: String)
 # Big moments that deserve a pop-up: first contact, war on you, civil war, a leader's death
 signal major_event(title: String, text: String, faction_id: String)
 
-const SAVE_VERSION = 7
+const SAVE_VERSION = 9
 const SAVE_PATH = "user://savegame.sav"
 
 const DAYS_PER_MONTH = 30
@@ -926,8 +926,9 @@ func check_launch(faction_id: String, venture_id: String, district: District, le
 					if district.food_yield >= GameData.rule("food_source_cap") - 0.001:
 						return "Every food source here is already worked (build Allotments for more)"
 				"control":
-					if district.share(faction_id) >= 95.0:
-						return "Already fully under your control"
+					# Safeguard keeps going while there's danger left, so a district can be made fully Safe
+					if district.share(faction_id) >= 95.0 and danger(district) < 0.04:
+						return "Already fully under your control, and safe"
 				"threat":
 					if not district_threatened(faction_id, district):
 						return "No threat here: reinforce a district that's under attack, or borders an enemy or raiders"
@@ -1106,6 +1107,9 @@ func _resolve(v: ActiveVenture):
 	if settlers > 0:
 		text += ", %d settle there for good" % settlers
 	var fate = _leader_outcome(leader, tier, def, v.task)
+	# A triumph or a disaster can bring a choice about what it means (in place of the next everyday event)
+	if leader and tier in ["triumph", "disaster"] and day >= f.next_event_day:
+		_fire_moment(f.id, "venture_" + tier, leader, v.venture_id)
 	if fate != "":
 		text += ". " + fate
 	var kind = "info"
@@ -1237,6 +1241,9 @@ func _character_died(c: Character, fate: String):
 	_record_departure(c, fate)
 	characters.erase(c)
 	c.death_day = day
+	# A death in the family or on the council brings the question of how to grieve
+	if c.family or c.post != "" or was_leader:
+		_fire_moment(c.faction_id, "death", c)
 	c.fate = fate
 	if c.family or was_leader:
 		graveyard.append(c)
@@ -1522,6 +1529,7 @@ func _life_cycle():
 			c.age += 1
 			if c.family and c.age == 16:
 				_grow_up(c)
+				_fire_moment(c.faction_id, "coming_of_age", c)
 				if c.faction_id == player_id:
 					var best = c.best_skill()
 					event.emit("%s comes of age and joins your crew (%s %d)." % [c.name, best.capitalize(), c.skills[best]], "good")
@@ -1532,17 +1540,35 @@ func _life_cycle():
 			continue
 		if rng.randf() < monthly_death_chance(c):
 			_character_died(c, "died of old age" if c.age >= 65 else "died of illness")
-	for leader in characters.duplicate():
-		if not leader.is_leader or leader.spouse_id < 0 or leader.age >= 55:
+	# Every married couple can have children, not only the leader: first the news, then a birth about nine months on
+	for mother in characters.duplicate():
+		if mother.sex != "f" or not mother.is_adult() or mother.spouse_id < 0:
 			continue
-		var spouse = character_by_id(leader.spouse_id)
-		if spouse == null or spouse.faction_id != leader.faction_id or spouse.age >= 45:
+		var father = character_by_id(mother.spouse_id)
+		# A child on the way is born even if the father has died since
+		if mother.due_day > 0:
+			if day >= mother.due_day:
+				mother.due_day = 0
+				# The child belongs to whichever parent is of the family (the leader's line), and to both parents
+				var parent: Character = mother if mother.family or mother.is_leader or father == null else father
+				var child = _new_child(parent, 0)
+				if mother.id not in child.parent_ids:
+					child.parent_ids.append(mother.id)
+				if mother.spouse_id >= 0 and mother.spouse_id not in child.parent_ids:
+					child.parent_ids.append(mother.spouse_id)
+				if mother.faction_id == player_id:
+					event.emit("%s is born to %s%s." % [child.name, mother.name, (" and " + father.name) if father else ""], "good")
+				_fire_moment(mother.faction_id, "birth", child)
 			continue
-		var kids = everyone_of(leader.faction_id).filter(func(c): return leader.id in c.parent_ids)
-		if kids.size() < 5 and rng.randf() < GameData.rule("birth_chance"):
-			var child = _new_child(leader, 0)
-			if leader.faction_id == player_id:
-				event.emit("%s is born to %s." % [child.name, leader.name], "good")
+		if father == null or father.faction_id != mother.faction_id:
+			continue
+		if mother.age >= 45 or father.age >= 60:
+			continue
+		var kids = everyone_of(mother.faction_id).filter(func(c): return mother.id in c.parent_ids or (father.id in c.parent_ids and mother.id in c.parent_ids))
+		if kids.size() < int(GameData.rule("children_per_couple")) and rng.randf() < GameData.rule("birth_chance"):
+			mother.due_day = day + int(GameData.rule("pregnancy_days"))
+			if mother.faction_id == player_id:
+				event.emit("%s is expecting a child (due in about nine months)." % mother.name, "good")
 	for fid in factions:
 		var leader = leader_of(fid)
 		if leader:
@@ -1988,6 +2014,8 @@ func building_slots(district: District) -> int:
 	if district.owner_id() == "":
 		return 0
 	var slots = int(GameData.rule("building_slots").get(district.get_control_status(), 0))
+	if district_payoffs(district)["rebuilt"]:
+		slots += int(GameData.rule("payoff_rebuilt_slots"))
 	# A City Again: Secured districts take one more building
 	if district.get_control_status() == "secured" and factions.has(district.owner_id()):
 		slots += int(factions[district.owner_id()].effect("secured_slots"))
@@ -2077,7 +2105,10 @@ func district_food(d: District) -> float:
 	var food = mult * (0.2 + d.development * 0.3) * (1.0 - d.ruin_level * 0.5) + d.food_yield
 	if buildings_active(d):
 		food += d.building_effect("supplies_daily")
-	return food * factions[d.owner_id()].effect("food_mult") if factions.has(d.owner_id()) else food
+	if not factions.has(d.owner_id()):
+		return food
+	# Cleared ground grows more (a district payoff)
+	return food * factions[d.owner_id()].effect("food_mult") * (GameData.rule("payoff_cleared_food") if district_payoffs(d)["cleared"] else 1.0)
 
 # The food that drives a district's growth: its own, plus a share of what the owner's
 # neighbouring districts grow (food travels a little way)
@@ -2093,7 +2124,29 @@ func district_growth_food(d: District) -> float:
 
 # How many people a district can house: rebuilding (development) makes room
 func housing(d: District) -> float:
-	return GameData.rule("housing_base") + d.development * GameData.rule("housing_per_development")
+	return (GameData.rule("housing_base") + d.development * GameData.rule("housing_per_development")) * (GameData.rule("payoff_restored_mult") if district_payoffs(d)["restored"] else 1.0)
+
+# The first time a faction brings a district to Restored, it earns renown (once per owner)
+func _check_restored():
+	for d in districts:
+		var owner = d.owner_id()
+		if owner == "" or d.restored_by == owner or not district_payoffs(d)["restored"]:
+			continue
+		d.restored_by = owner
+		factions[owner].add_renown(GameData.rule("payoff_restored_renown"))
+		if owner == player_id:
+			event.emit("%s is Restored: the ruins are gone, it's safe, fully rebuilt and firmly yours. More taxes and housing there for good (+%d renown)." % [d.district_name, GameData.rule("payoff_restored_renown")], "good")
+
+# What a district of yours has earned by reaching its ceilings (the same for every faction): Cleared (ruins
+# under 10%: more food), Safe (no danger: more manpower), Rebuilt (fully developed: one more building slot),
+# and all three plus Secured: Restored (more taxes and housing)
+func district_payoffs(d: District) -> Dictionary:
+	var owned = d.owner_id() != ""
+	var cleared = owned and d.ruin_level < 0.1
+	var safe = owned and danger(d) < 0.04
+	var rebuilt = owned and d.development >= 0.99
+	return {"cleared": cleared, "safe": safe, "rebuilt": rebuilt,
+		"restored": cleared and safe and rebuilt and d.get_control_status() == "secured"}
 
 # What a district gives its owner each day: food, materials, wealth (taxes on its people)
 # and manpower (grown from food, if the district is calm enough)
@@ -2105,7 +2158,7 @@ func district_income(d: District) -> Dictionary:
 	var owner: Faction = factions[d.owner_id()]
 	income["supplies"] = district_food(d)
 	income["wealth"] = mult * d.population * (GameData.rule("tax_per_pop") + d.development * GameData.rule("tax_per_pop_development")) \
-		* owner.effect("wealth_income_mult")
+		* owner.effect("wealth_income_mult") * (GameData.rule("payoff_restored_mult") if district_payoffs(d)["restored"] else 1.0)
 	var recruit_mult = 1.0
 	if buildings_active(d):
 		income["materials"] += d.building_effect("materials_daily")
@@ -2113,7 +2166,7 @@ func district_income(d: District) -> Dictionary:
 		recruit_mult = d.building_effect("recruit_mult")
 	var calm = 1.0 if d.grievance < 50.0 else (0.5 if d.grievance < 80.0 else 0.0)
 	# Rebuilt districts turn food into fighters better: more homes, more young people
-	income["recruits"] = district_growth_food(d) * GameData.rule("manpower_per_food") * calm * recruit_mult * (0.5 + d.development)
+	income["recruits"] = district_growth_food(d) * GameData.rule("manpower_per_food") * calm * recruit_mult * (0.5 + d.development) * (GameData.rule("payoff_safe_manpower") if district_payoffs(d)["safe"] else 1.0)
 	return income
 
 # Running more districts costs more than proportionally: the brake on endless expansion
@@ -2250,6 +2303,8 @@ func advance_day():
 	_check_eliminations()
 	_check_deeds()
 	_update_ambitions()
+	_check_restored()
+	_update_events()
 	_update_tasks()
 	_check_recruitment()
 	for fid in factions:
@@ -2398,7 +2453,7 @@ func to_save() -> Dictionary:
 		"version": SAVE_VERSION, "day": day, "player_id": player_id,
 		"rng_seed": str(rng.seed), "rng_state": str(rng.state),
 		"factions": [], "relations": [], "districts": [], "ventures": [], "constructions": [], "missions": [],
-		"tasks": tasks.map(func(t): return t.to_dict()), "proposals": proposals.duplicate(true), "demand_warned": demand_warned.duplicate(), "player_defeated": player_defeated,
+		"tasks": tasks.map(func(t): return t.to_dict()), "pending_events": pending_events.duplicate(true), "proposals": proposals.duplicate(true), "demand_warned": demand_warned.duplicate(), "player_defeated": player_defeated,
 		"characters": characters.map(func(c): return c.to_dict()), "next_character_id": next_character_id, "departed": departed.duplicate(true), "player_met": player_met.duplicate(), "next_split_id": next_split_id, "graveyard": graveyard.map(func(c): return c.to_dict()),
 	}
 	for f in factions.values():
@@ -2436,6 +2491,7 @@ func _load(data: Dictionary):
 		missions.append(DiplomaticMission.from_dict(md))
 	for td in data["tasks"]:
 		tasks.append(StandingTask.from_dict(td))
+	pending_events = data["pending_events"]
 	proposals = data["proposals"]
 	demand_warned = data["demand_warned"]
 	player_defeated = data["player_defeated"]
@@ -2530,6 +2586,125 @@ func _check_deeds():
 			else:
 				event.emit("The %s: \"%s\" (+%d renown)." % [f.display_name, deed["label"], deed["renown"]], "info")
 
+# --- Choice events (doc 14, slice 1) -------------------------------------------------------
+
+# The moments that can bring a choice event, and the faction effects an event option can apply (for a time)
+const EVENT_MOMENTS = ["coming_of_age", "birth", "death", "venture_triumph", "venture_disaster", "pulse"]
+const EVENT_EFFECTS = ["wealth_income_mult", "trade_income_mult", "food_mult", "scavenge_yield_mult", "defence_mult",
+	"diplomacy_mult", "crew_cap_mult", "owned_daily_grievance", "split_chance_mult", "heir_claim", "demand_acceptance_mult"]
+# How the effects read, for the option buttons and the outliner
+const EFFECT_WORDS = {"wealth_income_mult": "wealth income", "trade_income_mult": "trade income", "food_mult": "food",
+	"scavenge_yield_mult": "scavenging yield", "defence_mult": "attacks on your land", "diplomacy_mult": "treaty acceptance",
+	"crew_cap_mult": "manpower limit", "owned_daily_grievance": "grievance a day", "split_chance_mult": "split chance at a succession",
+	"heir_claim": "the heir's claim", "demand_acceptance_mult": "demands for tribute paid"}
+const EVENT_PULSE_DAYS = [90, 120]
+
+# Choice events waiting for the player's answer: [{"event", "subject", "venture"}] (the game waits on them)
+var pending_events: Array = []
+
+func _first_upper(text: String) -> String:
+	return text.substr(0, 1).to_upper() + text.substr(1)
+
+# What an option does, in words: "Food -10%, grievance a day -0.02, for 30 days"
+func event_option_text(option: Dictionary, venture_id: String = "") -> String:
+	var parts = []
+	for name in option.get("effects", {}):
+		var value: float = option["effects"][name]
+		if name.ends_with("_mult"):
+			parts.append("%s %+d%%" % [_first_upper(EFFECT_WORDS.get(name, name)) if parts.is_empty() else EFFECT_WORDS.get(name, name), roundi((value - 1.0) * 100)])
+		else:
+			parts.append("%s %+.2f" % [_first_upper(EFFECT_WORDS.get(name, name)) if parts.is_empty() else EFFECT_WORDS.get(name, name), value] if absf(value) < 1.0 else "%s %+d" % [EFFECT_WORDS.get(name, name), value])
+	for v in option.get("venture_odds", {}):
+		var id = venture_id if v == "$venture" else v
+		var label = GameData.venture(id)["label"] if GameData.ventures().has(id) else "that venture"
+		parts.append("%s odds %+d%%" % [label, roundi((option["venture_odds"][v] - 1.0) * 100)])
+	for s in option.get("skill_odds", {}):
+		parts.append("%s ventures %+d%%" % [s.capitalize(), roundi((option["skill_odds"][s] - 1.0) * 100)])
+	return "%s, for %d days" % [", ".join(parts), option["days"]]
+
+# Something happened to a character: a choice event of that kind may follow. The player answers theirs;
+# the AI picks by the same visible leanings (pillar 3)
+func _fire_moment(faction_id: String, moment: String, subject: Character, venture_id: String = ""):
+	var f: Faction = factions.get(faction_id)
+	if f == null:
+		return
+	var pool = []
+	var total = 0.0
+	for id in GameData.events():
+		var ev = GameData.events()[id]
+		if ev["moment"] != moment:
+			continue
+		# The same everyday event won't come back for two years
+		if moment == "pulse" and day - int(f.event_last.get(id, -9999)) < 720:
+			continue
+		pool.append(id)
+		total += float(ev.get("weight", 1.0))
+	if pool.is_empty():
+		return
+	var roll = rng.randf() * total
+	var chosen = pool[0]
+	for id in pool:
+		roll -= float(GameData.events()[id].get("weight", 1.0))
+		if roll <= 0.0:
+			chosen = id
+			break
+	f.event_last[chosen] = day
+	f.next_event_day = day + rng.randi_range(EVENT_PULSE_DAYS[0], EVENT_PULSE_DAYS[1])
+	var entry = {"event": chosen, "subject": subject.name if subject else "", "venture": venture_id}
+	if faction_id == player_id and f.ai == null:
+		pending_events.append(entry)
+		return
+	# The AI weighs each option by its own leanings, and picks
+	var options: Array = GameData.events()[chosen]["options"]
+	var weights = options.map(func(o): return float(o.get("ai_weight", 1.0)) * FactionAI.temperament(o["ai_goal"], f))
+	var pick = rng.randf() * weights.reduce(func(a, b): return a + b, 0.0)
+	var index = 0
+	for i in options.size():
+		pick -= weights[i]
+		if pick <= 0.0:
+			index = i
+			break
+	apply_event_option(faction_id, entry, index)
+
+# An option's effects take hold for its days
+func apply_event_option(faction_id: String, entry: Dictionary, index: int):
+	var f: Faction = factions.get(faction_id)
+	if f == null:
+		return
+	var ev = GameData.events()[entry["event"]]
+	var option: Dictionary = ev["options"][index]
+	var odds = {}
+	for v in option.get("venture_odds", {}):
+		odds[entry["venture"] if v == "$venture" else v] = option["venture_odds"][v]
+	f.timed_effects.append({"label": ev["title"], "choice": option["label"], "summary": event_option_text(option, entry["venture"]),
+		"until": day + int(option["days"]), "effects": option.get("effects", {}).duplicate(), "venture_odds": odds, "skill_odds": option.get("skill_odds", {}).duplicate()})
+	f.effect_cache.clear()
+	if faction_id == player_id:
+		event.emit("%s: %s. %s." % [ev["title"], option["label"], event_option_text(option, entry["venture"])], "info")
+
+# The player answers the first waiting event
+func answer_event(index: int):
+	if pending_events.is_empty():
+		return
+	var entry = pending_events.pop_front()
+	apply_event_option(player_id, entry, index)
+
+# The text of a waiting event, with names filled in
+func event_text(entry: Dictionary) -> String:
+	var ev = GameData.events()[entry["event"]]
+	var label = GameData.venture(entry["venture"])["label"].to_lower() if entry["venture"] != "" and GameData.ventures().has(entry["venture"]) else "venture"
+	return String(ev["text"]).replace("{name}", entry["subject"] if entry["subject"] != "" else "Someone").replace("{venture}", label)
+
+# Daily: effects wear off; every 3-4 months, an everyday event for each faction
+func _update_events():
+	for f in factions.values():
+		var before = f.timed_effects.size()
+		f.timed_effects = f.timed_effects.filter(func(t): return t["until"] > day)
+		if f.timed_effects.size() != before:
+			f.effect_cache.clear()
+		if day >= f.next_event_day:
+			_fire_moment(f.id, "pulse", leader_of(f.id))
+
 # --- Standing tasks (doc 13) --------------------------------------------------------------
 
 # Routine work that, on your own land, is done as a councillor's standing task
@@ -2608,8 +2783,8 @@ func task_done_reason(faction_id: String, venture_id: String, d: District) -> St
 			if d.food_yield >= GameData.rule("food_source_cap") - 0.001:
 				return "every food source is worked"
 		"control":
-			if d.share(faction_id) >= 95.0:
-				return "it's fully under your control"
+			if d.share(faction_id) >= 95.0 and danger(d) < 0.04:
+				return "it's fully under your control, and safe"
 		"development":
 			if d.development >= 0.99:
 				return "it's fully rebuilt"
@@ -2645,7 +2820,7 @@ func task_goal(def: Dictionary) -> String:
 		return "the ruins are stripped"
 	if def.has("min_grievance"):
 		return "the district is calm"
-	return {"food": "every food source is worked", "control": "it's fully under your control", "development": "it's fully rebuilt",
+	return {"food": "every food source is worked", "control": "it's fully under your control and safe", "development": "it's fully rebuilt",
 		"arms": "the armoury is full", "threat": "the threat passes"}.get(def.get("needs", ""), "the job is done")
 
 # The player pulls a councillor off: the run under way finishes, then the task ends
@@ -2746,7 +2921,7 @@ func task_stat_text(faction_id: String, venture_id: String, d: District) -> Stri
 		"food":
 			return "Food sources %.2f of %.1f" % [d.food_yield, GameData.rule("food_source_cap")]
 		"control":
-			return "Control %d of 95" % d.share(faction_id)
+			return "Control %d of 95, danger %d%%" % [d.share(faction_id), danger(d) * 100]
 		"development":
 			return "Development %d%% of 100%%" % (d.development * 100)
 		"arms":
