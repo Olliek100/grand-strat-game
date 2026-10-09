@@ -48,6 +48,19 @@ var peace_days: int = 0
 # For the dead (kept for family trees): the day and how they died
 var death_day: int = -1
 var fate: String = ""
+# Childhood (doc 14 slice 2): who raises them (data/council.json "upbringings", "" before age 6), their
+# tutor and the skill taught, how strongly they lean toward each trait (settled at 16), and childhood events seen
+var upbringing: String = ""
+var tutor_id: int = -1
+var tutor_skill: String = ""
+var leanings: Dictionary = {}
+var childhood: Array = []
+# The upbringing can be changed at most once a year (doc 14 slice 2, owner's option 2)
+var upbringing_day: int = -9999
+# A grown family member is asked about a match on a birthday on or after this day (doc 16)
+var match_day: int = 0
+# The house this person belongs to inside their faction (doc 16, H2), or -1
+var house_id: int = -1
 
 func _init(p_id: int, p_faction_id: String, p_name: String, p_age: int):
 	id = p_id
@@ -113,6 +126,8 @@ func trait_factors(skill: String) -> Array:
 	for t in traits:
 		var def = GameData.character_trait(t)
 		var mult = float(def.get("odds", 1.0)) * float(def.get("skill_odds", {}).get(skill, 1.0))
+		if skill == best_skill():
+			mult *= float(def.get("best_skill_odds", 1.0))
 		if mult != 1.0:
 			factors.append(["%s is %s" % [name, def["label"]], mult])
 	return factors
@@ -129,7 +144,8 @@ func to_dict() -> Dictionary:
 		"post": post, "traits": traits.duplicate(), "loyalty_mods": loyalty_mods.duplicate(true), "restless_warned": restless_warned,
 		"sex": sex, "is_leader": is_leader, "family": family, "dynasty": dynasty, "parent_ids": parent_ids.duplicate(), "spouse_id": spouse_id, "due_day": due_day,
 		"respect": respect, "respect_label": respect_label, "ruling_since": ruling_since,
-		"rule_start": rule_start.duplicate(), "peace_days": peace_days, "death_day": death_day, "fate": fate}
+		"rule_start": rule_start.duplicate(), "peace_days": peace_days, "death_day": death_day, "fate": fate,
+		"upbringing": upbringing, "tutor_id": tutor_id, "tutor_skill": tutor_skill, "leanings": leanings.duplicate(), "childhood": childhood.duplicate(), "upbringing_day": upbringing_day, "match_day": match_day, "house_id": house_id}
 
 static func from_dict(data: Dictionary) -> Character:
 	var c = Character.new(int(data["id"]), data["faction"], data["name"], int(data["age"]))
@@ -157,6 +173,14 @@ static func from_dict(data: Dictionary) -> Character:
 	c.peace_days = int(data["peace_days"])
 	c.death_day = int(data["death_day"])
 	c.fate = data["fate"]
+	c.upbringing = data["upbringing"]
+	c.tutor_id = int(data["tutor_id"])
+	c.tutor_skill = data["tutor_skill"]
+	c.leanings = data["leanings"]
+	c.childhood = data["childhood"]
+	c.upbringing_day = int(data["upbringing_day"])
+	c.match_day = int(data["match_day"])
+	c.house_id = int(data["house_id"])
 	return c
 
 func is_adult() -> bool:

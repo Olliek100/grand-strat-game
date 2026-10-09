@@ -1,0 +1,41 @@
+{
+	"claim": {
+		"label": "Claim a district",
+		"description": "Demand one district on your shared border. If they hand it over, it's yours without a fight; if not, it's war, and taking it by assault wins.",
+		"demand": "hand over {district}",
+		"needs_district": true,
+		"ai_max_strength_ratio": 0.0,
+		"justify_days": 180,
+		"cost": {"renown": 10, "wealth": 20},
+		"price": 40,
+		"accept_need": 1.5,
+		"accept_max": 0.9,
+		"ai_goal": "conquer"
+	},
+	"subjugate": {
+		"label": "Subjugate",
+		"description": "Make them your tributary: they keep their land and ruler and run their own affairs, but pay you tribute in food, materials and wealth, make no diplomacy but trade, start no wars, and join yours with half their force.",
+		"demand": "become our tributary",
+		"needs_district": false,
+		"ai_max_strength_ratio": 0.6,
+		"justify_days": 270,
+		"cost": {"renown": 20, "wealth": 40},
+		"price": 70,
+		"accept_need": 2.5,
+		"accept_max": 0.7,
+		"ai_goal": "control"
+	},
+	"vassalize": {
+		"label": "Vassalize",
+		"description": "Take them in: their land and people merge into yours, and their ruling family joins your faction (its own house, resentful at first).",
+		"demand": "submit and join us",
+		"needs_district": false,
+		"ai_max_strength_ratio": 0.4,
+		"justify_days": 360,
+		"cost": {"renown": 30, "wealth": 60},
+		"price": 100,
+		"accept_need": 3.5,
+		"accept_max": 0.4,
+		"ai_goal": "conquer"
+	}
+}

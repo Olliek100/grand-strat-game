@@ -28,8 +28,8 @@
 	"watchtower": {
 		"label": "Watchtower",
 		"icon": "T",
-		"description": "Lookouts and barricades. Raids, assaults and agitation here are 20% less likely to succeed.",
-		"summary": "-20% hostile odds here",
+		"description": "Lookouts and barricades. The defenders here count x1.25 against raids and assaults, and agitation is 20% less likely to succeed.",
+		"summary": "defenders count x1.25",
 		"requires": "claimed",
 		"cost": {"materials": 25},
 		"crew": 2,
@@ -91,6 +91,19 @@
 		"upkeep": {"wealth": 0.1},
 		"effects": {"crew_cap": 4, "recruit_mult": 1.5},
 		"ai_goal": "crew"
+	},
+	"school": {
+		"label": "School",
+		"icon": "Sc",
+		"description": "Lessons for the shelter's children. Grievance falls a little faster here, and your family's children can be schooled among the people: they lean toward Diplomacy, Stewardship and the Of the People trait.",
+		"summary": "your children can go to school",
+		"requires": "claimed",
+		"cost": {"materials": 20, "wealth": 20},
+		"crew": 2,
+		"days": 20,
+		"upkeep": {"wealth": 0.06},
+		"effects": {"school": 1, "grievance_daily": -0.05},
+		"ai_goal": "stabilize"
 	},
 	"workshop": {
 		"label": "Workshop",

@@ -21,8 +21,6 @@ var food_net: float = 0.0
 var has_settle_target: bool = false
 var days_until_next_diplomacy: int = 12
 # A planned war: who, and on what day it will be declared ("" / -1 when there's no plan)
-var war_plan_target: String = ""
-var war_plan_day: int = -1
 
 func _init(p_faction_id: String):
 	faction_id = p_faction_id
@@ -34,10 +32,12 @@ func think(city: CityMap):
 	_think_diplomacy(city)
 	if city.day % 30 == 7:
 		city.ai_manage_council(faction_id)
+		_think_houses(city)
 	days_until_next_move -= 1
 	if days_until_next_move > 0:
 		return
 	days_until_next_move = city.rng.randi_range(3, 7)
+	_think_buy(city)
 	# One move at a time, from one list: building at home competes with ventures abroad for the same
 	# turn and the same stocks, so a faction that builds up grows outward more slowly (and the other way round)
 	var me: Faction = city.factions[faction_id]
@@ -73,7 +73,16 @@ func think(city: CityMap):
 			elif city.check_launch(faction_id, venture_id, d) != "":
 				continue
 			var target_id = city.venture_target(faction_id, venture_id, d)
-			var odds = VentureSystem.compute_odds(venture_id, me, d, city, target_id)["odds"]
+			var odds = 0.0
+			# A fight is judged at the crew it would really send, and not picked while outnumbered
+			if GameData.venture(venture_id).has("force") and target_id != "":
+				var captain = city.best_leader(faction_id, "command")
+				var chances = VentureSystem.compute_odds(venture_id, me, d, city, target_id, captain, city.recommended_plan(faction_id, venture_id, d, captain)["crew"])
+				if chances["force"]["ratio"] < 1.0:
+					continue
+				odds = chances["odds"]
+			else:
+				odds = VentureSystem.compute_odds(venture_id, me, d, city, target_id)["odds"]
 			var goal: String = GameData.venture(venture_id)["ai_goal"]
 			# Factions lean into what their traits make them good at
 			var preference = me.traits.venture_modifier(venture_id)
@@ -95,15 +104,56 @@ func think(city: CityMap):
 		var plan = city.recommended_plan(faction_id, best_venture, best_district, leader)
 		city.launch_venture(faction_id, best_venture, best_district, leader.id if leader else -2, plan["crew"], plan["funding"])
 
-# Wars are planned against a weaker neighbour, announced in advance, and ended when worn down
-func _think_war(city: CityMap):
+# Founds cadet houses as it grows (doc 16): one house per five districts, for a grown family member who isn't the
+# heir, on a district far from home. The same grant the player makes, by the same rules
+func _think_houses(city: CityMap):
+	if city.houses_of(faction_id).size() >= city.districts_held(faction_id) / 5:
+		return
+	var heir = city.succession_outlook(faction_id)["heir"]
 	var me: Faction = city.factions[faction_id]
+	var home: District = city.districts[me.home_id] if me.home_id >= 0 else null
+	var lords = city.characters_of(faction_id).filter(func(c): return c.family and c != heir and c.house_id < 0)
+	if lords.is_empty() or home == null:
+		return
+	var land: District = null
+	for d in city.districts:
+		if city.check_grant(faction_id, lords[0], d) == "" and (land == null or d.center.distance_to(home.center) > land.center.distance_to(home.center)):
+			land = d
+	if land:
+		city.grant_land(faction_id, lords[0], land)
+
+# Buys what it's short of with wealth it can spare, by the player's prices: materials when low,
+# arms when low and threatened (at war, or next to raiders)
+func _think_buy(city: CityMap):
+	var me: Faction = city.factions[faction_id]
+	var reserve: float = GameData.rule("ai_buy_wealth_reserve")
+	var wants = {}
+	if me.materials < 15.0:
+		wants["materials"] = 15
+	var threatened = not city.war_enemies(faction_id).is_empty() or city.factions.keys().any(func(fid): return fid != faction_id and city.is_raider(fid) and city.shares_border(faction_id, fid))
+	if threatened and me.arms < 8.0:
+		wants["arms"] = 8 - int(me.arms)
+	for resource_type in wants:
+		var amount: int = wants[resource_type]
+		while amount > 0 and me.wealth - city.buy_price(faction_id, resource_type, amount) < reserve:
+			amount -= 1
+		if amount > 0:
+			city.buy(faction_id, resource_type, amount)
+
+# Wars come from a goal justified in the open (doc 15, P2): against a weaker neighbour, the harsher the goal
+# the bigger the gap. At war it takes its terms once the war score allows, and makes peace when worn down
+func _think_war(city: CityMap):
 	var wars = city.war_enemies(faction_id)
 	if not wars.is_empty():
-		war_plan_target = ""
-		war_plan_day = -1
+		# Call its houses to fight (each may decline), by the player's rules
+		for h in city.houses_of(faction_id):
+			if city.check_call_house(faction_id, int(h["id"])) == "":
+				city.call_house(faction_id, int(h["id"]))
 		for enemy_id in wars:
 			var r = city.relation(faction_id, enemy_id)
+			if city.check_enforce(faction_id, enemy_id) == "":
+				city.enforce_claim(faction_id, enemy_id)
+				continue
 			var mine: float = r.exhaustion[faction_id]
 			var war_days = city.day - r.war_start_day
 			# Sue for peace when worn down, or when a war has dragged on with no end
@@ -113,31 +163,36 @@ func _think_war(city: CityMap):
 			if r.peace_offered_by == enemy_id and (mine >= 30.0 or war_days > 90):
 				city.make_peace(faction_id, enemy_id)
 		return
-
-	if war_plan_target != "":
-		if city.day >= war_plan_day:
-			var target = war_plan_target
-			war_plan_target = ""
-			war_plan_day = -1
-			city.declare_war(faction_id, target)
-		return
-
+	# One claim at a time: while pressing one, send the ultimatum early if it's strong enough
+	for fid in city.factions:
+		if fid != faction_id and city.relation(faction_id, fid).claim.get("by", "") == faction_id:
+			if city.check_send_early(faction_id, fid) == "":
+				city.send_ultimatum_early(faction_id, fid)
+			return
 	if city.day % 10 != 0:
 		return
 	for enemy_id in city.factions:
 		if enemy_id == faction_id:
 			continue
+		# Recourse against a raider: a district claim, even when weaker, if it and its friends can make a fight of it
+		if city.claim_reason(faction_id, enemy_id) != "" and city.is_raider(enemy_id) \
+				and city.side_strength(faction_id, enemy_id) >= city.side_strength(enemy_id, faction_id) * 0.7 and city.rng.randf() < 0.3:
+			if city.justify(faction_id, enemy_id, "claim") == "":
+				return
 		var appeal = war_appeal(city, enemy_id)
 		if appeal.is_empty() or city.rng.randf() >= 0.4:
 			continue
-		if appeal["pact_only"]:
-			Diplomacy.break_treaty(city, faction_id, enemy_id, "pact")
-			if city.check_declare_war(faction_id, enemy_id) != "":
-				continue
-		war_plan_target = enemy_id
-		war_plan_day = city.day + int(GameData.rule("war_warning_days"))
-		city.announce_war_plan(faction_id, enemy_id, int(GameData.rule("war_warning_days")))
-		return
+		# (a pact in the way is broken by justify, at the cost of everyone's trust)
+		# The harshest goal the gap allows, then milder ones
+		var ratio = city.faction_strength(enemy_id) / maxf(1.0, city.faction_strength(faction_id))
+		var goals = ["claim"]
+		if ratio < GameData.war_goal("subjugate")["ai_max_strength_ratio"]:
+			goals.push_front("subjugate")
+		if ratio < GameData.war_goal("vassalize")["ai_max_strength_ratio"] and temperament("conquer", city.factions[faction_id]) >= 1.0:
+			goals.push_front("vassalize")
+		for goal_id in goals:
+			if city.justify(faction_id, enemy_id, goal_id) == "":
+				return
 
 # Whether this faction sees `enemy_id` as a war target right now: {"pact_only", "reason"}, or {} if not.
 # No randomness, so the diplomacy panel shows exactly the judgement the AI acts on.
@@ -183,8 +238,9 @@ func war_appeal(city: CityMap, enemy_id: String) -> Dictionary:
 func stance_toward(city: CityMap, other_id: String) -> Array:
 	if city.is_at_war(faction_id, other_id):
 		return ["ENEMY", "At war"]
-	if war_plan_target == other_id:
-		return ["PREPARING WAR", "Massing on the border; war in %d days" % (war_plan_day - city.day)]
+	var pressing = city.relation(faction_id, other_id)
+	if pressing.claim.get("by", "") == faction_id:
+		return ["PRESSING A CLAIM", "%s; %s" % [city.claim_text(pressing, other_id), "ultimatum in %d days" % (int(pressing.claim["ready_day"]) - city.day) if pressing.claim["stage"] == "justifying" else "awaiting an answer"]]
 	var appeal = war_appeal(city, other_id)
 	if not appeal.is_empty():
 		return ["TARGET", appeal["reason"]]
@@ -248,6 +304,15 @@ func _diplomacy_value(action_id: String, other_id: String, me: Faction, city: Ci
 	var my_view = city.opinion_of(faction_id, other_id)
 	var their_view = city.opinion_of(other_id, faction_id)
 	match action_id:
+		"match":
+			# Bind a family it gets on with, or one it would rather not fight
+			return 0.5 if my_view > 0.0 and their_view > -10.0 else 0.0
+		"backing":
+			# Rally friends behind a claim the target isn't likely to give in to
+			var target = city.pressing_claim_on(faction_id)
+			if target == "":
+				return 0.0
+			return 0.9 if city.ultimatum_acceptance(city.relation(faction_id, target)) < 0.6 else 0.0
 		"envoy":
 			# Court factions it wants something from, when it can spare the wealth
 			if me.wealth < 80.0 or other_id == city.player_id or my_view < -10.0 or their_view > 30.0:
@@ -445,6 +510,9 @@ func _value(goal: String, d: District, me: Faction, target_id: String, city: Cit
 			# Raid for what's worth taking, most of all when short; hold off while a demand is out
 			if target_id != "" and (city.mission_between(faction_id, target_id) or city.proposal_between(faction_id, target_id) >= 0):
 				return 0.0
+			# Don't throw away a promise of safety it paid for
+			if target_id != "" and city.relation(faction_id, target_id).spare_until[target_id] > city.day:
+				return 0.0
 			var need = 1.5 if me.supplies < 20.0 or me.materials < 15.0 else 0.8
 			var bold = 1.5 if target_id != "" and city.relation(faction_id, target_id).bold_until[faction_id] > city.day else 1.0
 			return 0.75 * city.raid_worth(d) * need * bold
@@ -465,13 +533,11 @@ func _value(goal: String, d: District, me: Faction, target_id: String, city: Cit
 	return 0.0
 
 func to_dict() -> Dictionary:
-	return {"days_until_next_move": days_until_next_move, "days_until_next_diplomacy": days_until_next_diplomacy, "war_plan_target": war_plan_target, "war_plan_day": war_plan_day}
+	return {"days_until_next_move": days_until_next_move, "days_until_next_diplomacy": days_until_next_diplomacy}
 
 func load_dict(data: Dictionary):
 	days_until_next_move = int(data.get("days_until_next_move", 3))
 	days_until_next_diplomacy = int(data.get("days_until_next_diplomacy", 12))
-	war_plan_target = data.get("war_plan_target", "")
-	war_plan_day = int(data.get("war_plan_day", -1))
 
 func _home_secured(city: CityMap) -> bool:
 	var me: Faction = city.factions[faction_id]

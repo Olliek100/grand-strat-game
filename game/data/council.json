@@ -19,7 +19,14 @@
 		"comrade_lost": {"label": "Lost a comrade", "decay": 0.05, "limit": 15},
 		"comrade_dismissed": {"label": "Saw a comrade thrown out", "decay": 0.05, "limit": 15},
 		"new_leader": {"label": "Unsure of the new leader", "decay": 0.03, "limit": 20},
-		"passed_over_rule": {"label": "Passed over for the leadership", "decay": 0.02, "limit": 30}
+		"passed_over_rule": {"label": "Passed over for the leadership", "decay": 0.02, "limit": 30},
+		"dropped_tutor": {"label": "Dropped as the children's tutor", "decay": 0.04, "limit": 15},
+		"absorbed": {"label": "Their house was taken in by force", "decay": 0.02, "limit": 30},
+		"married_in": {"label": "Married into the ruling family", "decay": 0.0, "limit": 20},
+		"granted_land": {"label": "Granted land of their own", "decay": 0.0, "limit": 15},
+		"house_match": {"label": "A match with the ruling family", "decay": 0.0, "limit": 20},
+		"lost_land": {"label": "Lost their land in your wars", "decay": 0.02, "limit": 30},
+		"fought_with_you": {"label": "Fought beside you", "decay": 0.02, "limit": 15}
 	},
 	"traits": {
 		"veteran": {"label": "Veteran", "kind": "earned", "description": "Has led 5 ventures: +5% odds on anything they lead", "odds": 1.05},
@@ -36,6 +43,14 @@
 		"generous": {"label": "Generous", "kind": "personality", "opposite": "greedy", "description": "Shares what there is: +5% on Diplomacy ventures, +5 loyalty. As leader, the faction leans Diplomatic", "skill_odds": {"diplomacy": 1.05}, "loyalty": 5, "faction_trait": "Diplomatic"},
 		"conqueror": {"label": "Conqueror", "kind": "ruling", "description": "Took 3 districts by force as leader: +10% on the faction's Command ventures, everyone's loyalty +3", "faction_skill_odds": {"command": 1.1}, "respect": 3},
 		"builder": {"label": "Builder", "kind": "ruling", "description": "Completed 5 buildings as leader: +10% on the faction's Stewardship ventures", "faction_skill_odds": {"stewardship": 1.1}},
-		"peacemaker": {"label": "Peacemaker", "kind": "ruling", "description": "A year of peace with 2+ treaties as leader: other factions are 15% likelier to accept your proposals", "acceptance": 1.15}
+		"peacemaker": {"label": "Peacemaker", "kind": "ruling", "description": "A year of peace with 2+ treaties as leader: other factions are 15% likelier to accept your proposals", "acceptance": 1.15},
+		"of_the_people": {"label": "Of the People", "kind": "upbringing", "opposite": "born_to_rule", "description": "Grew up among the people: +5% on Diplomacy and Stewardship ventures. As heir, a contested succession is 30% less likely; as leader, everyone's loyalty +3", "skill_odds": {"diplomacy": 1.05, "stewardship": 1.05}, "split_mult": 0.7, "respect": 3},
+		"born_to_rule": {"label": "Born to Rule", "kind": "upbringing", "opposite": "of_the_people", "description": "Groomed to rule: +10% on ventures using their best skill, and +10 claim as heir. Expects power: -10 loyalty unless on the council", "best_skill_odds": 1.1, "claim": 10, "loyalty_off_council": -10}
+	},
+	"upbringings": {
+		"school": {"label": "Schooled among the people", "skills": {"diplomacy": 0.35, "stewardship": 0.35}, "leanings": {"of_the_people": 0.8}},
+		"tutor": {"label": "Tutored by {tutor}", "skills": {"$tutor": 0.45}, "leanings": {"born_to_rule": 0.8, "$tutor_nature": 0.5}},
+		"hired": {"label": "Taught by a hired tutor ({skill})", "skills": {"$tutor": 0.45}, "leanings": {"born_to_rule": 0.7}},
+		"parents": {"label": "Raised by the parents", "skills": {"$parents": 0.2}, "leanings": {"$parents_nature": 0.4}}
 	}
 }

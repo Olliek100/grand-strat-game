@@ -122,5 +122,86 @@
 			{"label": "Put them to building", "days": 60,
 				"effects": {"scavenge_yield_mult": 1.1, "owned_daily_grievance": 0.02}, "ai_goal": "develop"}
 		]
+	},
+	"upbringing": {
+		"title": "Who Raises the Child", "moment": "education", "weight": 1.0,
+		"text": "{name} is six, old enough to learn. Who brings them up, and toward what? It will shape the adult they become at sixteen.",
+		"change_text": "A new direction for {name}? What they've learned so far stays with them; from now on the new upbringing shapes them. Once changed, it stays for at least a year.",
+		"options": [
+			{"label": "Send them to school", "upbringing": "school", "needs": "school", "days": 90,
+				"effects": {"owned_daily_grievance": -0.02}, "ai_goal": "stabilize"},
+			{"label": "A tutor from the council: {tutor}", "upbringing": "tutor", "needs": "councillor", "days": 360,
+				"skill_odds": {"$tutor": 0.95}, "ai_goal": "control"},
+			{"label": "Hire a tutor ({hired})", "upbringing": "hired", "days": 360,
+				"effects": {"wealth_income_mult": 0.85}, "ai_goal": "buy"},
+			{"label": "Leave it to the parents", "upbringing": "parents", "ai_goal": "develop"}
+		]
+	},
+	"schoolyard_bully": {
+		"title": "The Schoolyard", "moment": "childhood", "upbringing": ["school"], "weight": 1.0,
+		"text": "An older child has been bullying the little ones at school. {name} stood up to them, fists first.",
+		"options": [
+			{"label": "Praise their courage", "child": {"leanings": {"brave": 2}, "skills": {"command": 1}}, "ai_goal": "harass"},
+			{"label": "Teach them to talk it down", "child": {"leanings": {"kind": 2}, "skills": {"diplomacy": 1}}, "ai_goal": "stabilize"}
+		]
+	},
+	"shelter_friends": {
+		"title": "Friends from the Shelters", "moment": "childhood", "upbringing": ["school", "parents"], "weight": 1.0,
+		"text": "{name} spends every spare hour with children from the poorest shelters, and has started to talk like them.",
+		"options": [
+			{"label": "Let them be", "child": {"leanings": {"of_the_people": 2}, "skills": {"diplomacy": 1}}, "ai_goal": "stabilize"},
+			{"label": "Remind them who they are", "child": {"leanings": {"born_to_rule": 2, "ambitious": 1}}, "ai_goal": "control"}
+		]
+	},
+	"hid_in_raid": {
+		"title": "Hiding in the Cellar", "moment": "childhood", "weight": 1.0,
+		"text": "When the alarm went up last night, {name} hid in the cellar and wouldn't come out until morning.",
+		"options": [
+			{"label": "Hiding was clever", "child": {"leanings": {"craven": 2}, "skills": {"cunning": 1}}, "ai_goal": "scout"},
+			{"label": "Next time, stand with the guards", "child": {"leanings": {"brave": 2}}, "ai_goal": "defend"}
+		]
+	},
+	"harsh_lessons": {
+		"title": "Harsh Lessons", "moment": "childhood", "upbringing": ["tutor", "hired"], "weight": 1.0,
+		"text": "{name}'s tutor drives the lessons in hard: long hours, a sharp tongue, and worse when they slip.",
+		"options": [
+			{"label": "It's how rulers are made", "child": {"leanings": {"cruel": 2, "born_to_rule": 1}, "skills": {"$best": 1}}, "ai_goal": "control"},
+			{"label": "Rein the tutor in", "child": {"leanings": {"kind": 2}}, "ai_goal": "stabilize"}
+		]
+	},
+	"the_ledger": {
+		"title": "Keeping the Books", "moment": "childhood", "weight": 1.0,
+		"text": "{name} has been helping count the stores, and caught someone skimming.",
+		"options": [
+			{"label": "Reward them with a share", "child": {"leanings": {"greedy": 2}, "skills": {"stewardship": 1}}, "ai_goal": "income"},
+			{"label": "Let them give it to the hungry", "child": {"leanings": {"generous": 2}, "skills": {"stewardship": 1}}, "ai_goal": "food"}
+		]
+	},
+	"at_the_table": {
+		"title": "At the Leader's Table", "moment": "childhood", "upbringing": ["tutor", "hired", "parents"], "weight": 1.0,
+		"text": "{name} has started sitting in when the council meets, listening to every word.",
+		"options": [
+			{"label": "Let them stay and learn", "child": {"leanings": {"ambitious": 2, "born_to_rule": 1}, "skills": {"cunning": 1}}, "ai_goal": "control"},
+			{"label": "Send them back to their chores", "child": {"leanings": {"steadfast": 2}}, "ai_goal": "develop"}
+		]
+	},
+	"stray_dog": {
+		"title": "A Stray", "moment": "childhood", "weight": 1.0,
+		"text": "{name} brought home a half-starved dog and wants to keep it, though food is short.",
+		"options": [
+			{"label": "Let them keep it", "child": {"leanings": {"kind": 2, "generous": 1}}, "ai_goal": "stabilize"},
+			{"label": "Make them turn it out", "child": {"leanings": {"cruel": 1, "steadfast": 1}, "skills": {"command": 1}}, "ai_goal": "materials"}
+		]
+	},
+	"a_match": {
+		"title": "A Match", "moment": "match", "weight": 1.0,
+		"text": "{name} is of an age to marry. A match binds people to the family, and shapes the children to come.",
+		"options": [
+			{"label": "Marry {match}", "marry": "captain", "needs": "match", "ai_goal": "control"},
+			{"label": "A match with House {house}: {house_match}", "marry": "house", "needs": "house_match", "ai_goal": "stabilize"},
+			{"label": "Someone from the people", "marry": "people", "days": 180,
+				"effects": {"owned_daily_grievance": -0.02}, "ai_goal": "stabilize"},
+			{"label": "Not yet", "note": "Nothing changes. They'll be asked again in two years.", "ai_goal": "develop"}
+		]
 	}
 }

@@ -2,6 +2,42 @@
 
 Decisions that still stand: each with what was rejected and why. New entries go at the top. Check this before relitigating a settled question. Per-build detail (numbers, tuning, simulation results) is in /CHANGELOG.md.
 
+**2026-10-09 (houses and marriage; see 16-houses-and-marriage.md; built with the doc's recommended answers after the owner's "build it")**
+
+- **Grown family members marry through a choice event** ("A Match": a captain, someone from the people, a house, or not yet), and a family is capped at 16 living members. Rejected: automatic matches with a notice.
+- **Houses:** families inside a faction holding land; the district stays the faction's, the house keeps 25% of its income; loyalty is the head's; a disloyal house warns, then may break away with its land (the civil-war split); it may answer or decline a call to arms; house heads can contest a succession. **Houses come from Vassalize and from granting land** (a grown family member, or a captain with loyalty 50+). Rejected: a house running its districts like a tributary inside your borders.
+- **Marriage between factions** binds the families while both spouses live: +20 opinion both ways, easier pacts, alliances and backing, and pressing a claim on in-laws breaks your word. **Claims through blood: later.**
+
+**2026-10-04 (war goals, after reading P2)**
+
+- **Nothing but a shared border (and being a tributary) stops a faction justifying a war goal.** Rejected: a strength gate (it left a raided weak faction with no recourse). Treaties and truces don't block it either, but breaking one to press a claim costs -30 opinion with every faction, fading over years.
+- **Justifying takes months** (claim 180 days with a reason, subjugate 270, vassalize 360; half as long again without), and **each raid by the target brings it 30 days sooner.** The ultimatum gives 60 days. A reason halves the cost. Replaces the 30/60/90-day first draft (a few real seconds).
+- **Allies fight for the claimant too,** and ultimatum odds weigh both sides with their friends. Replaces the 2-year ban after a failed claim (removed).
+- **Tributary vs vassal, confirmed:** a tributary (Subjugate) keeps its land, ruler and own affairs and pays its suzerain; a vassal (Vassalize) is absorbed into the faction.
+
+**2026-10-02 (resources after the P1 playtest)**
+
+- **Wealth buys materials and arms instantly** (Economy window), at a price that rises the more you buy. Wealth was piling up (600+) while a faction with no materials or arms was stuck for good. Rejected: a standing order run by the Quartermaster (a later build; this is a dead-end fix now).
+- **Resource roles (owner):** materials pay for buildings, Safeguard, Rebuild (and Settle); manpower is what raids and assaults need; wealth shouldn't be a raid's price.
+
+**2026-10-02 (strength and war; see 15-strength-and-war.md)**
+
+- **Strength before dice (P1):** for raids and assaults, the balance of force (crew sent, their arms and leader, against the district's garrison, guards, arms, buildings and control) sets the odds; the dice pick within the range it allows. No Disaster at 1.5 to 1 or better; a Disaster costs crew and time, never land. Rejected: a stack of small multipliers where a faction's size barely counts.
+- **The assault crew limit is your idle manpower** (a trial; was a flat 12). Capped later if all-in assaults dominate.
+- **Garrisons:** every held district defends itself, growing toward a ceiling set by population, control and buildings, knocked down by attacks and recovering over time. **Population fills the garrison first; a share of what's left becomes manpower.** Rejected: defence only from things the owner keeps launching.
+- **War needs a justified goal and a refused ultimatum (P2),** replacing the 2026-09-24 rule (declared with a cost, a 15-day AI warning). Justifying costs **renown and wealth** and is shown to the target at once; the ultimatum has a deadline; accepting applies the terms without war. Reasons (a recent raid, lost land, bad blood) shorten it; none doubles it and costs opinion with onlookers.
+- **War goals:** **Claim a district** (accepted: it changes hands; refused: war, and taking it by assault wins). **Subjugate:** they keep their land and ruler but pay tribute in food, materials and wealth, and have no diplomacy except marriage and trade, and no wars (today's vassal treaty, made stricter). **Vassalize:** their land merges into yours and their ruler becomes a vassal house inside your faction. Rejected: tribute as a war goal.
+- **Two builds:** P1 first, played, then P2.
+- **Who fights:** **tributaries** (subjugated factions) join their suzerain's wars automatically with about half their force. **Vassal houses** don't: the liege asks, the house may decline, and joining earns it something. Rejected: vassals bound to every war (today's rule).
+- **Vassal houses** hold their old districts, have loyalty that can turn into revolt, marry into the liege's family and into other factions' houses. Their own design doc comes after P2, built with doc 14's marriage slice; P2 builds only the simple merge.
+
+**2026-10-02 (the spine revised; see 08-spine.md "Proposed next spine" and its owner's decisions)**
+
+- **The one-sentence spine:** "You lead a crew of survivors out of the collapse. Over generations, marriages, children and what you teach them turn your crew into a dynasty, and the gangs around you into the great houses of a rebuilt city. What you've built (land, people, arms and the people you raised) decides what you can take and hold, and growth strains it until a death tests whether it holds." The arc of a run is anarchic gangs → an organised post-apocalyptic city, over 2-3 generations. Rejected: the scav-crew sentence alone (no dynasty) and doc 14's family-only sentence (loses where a run starts). No CK-style noble titles.
+- **Next builds, in order: P1 strength over dice, P2 war goals and ultimatums, P3 council work**, then doc 14's later slices, then coalitions (old S6). Rejected: council work first, and carrying on with marriage (old S5) before the gambling feel is fixed.
+- **Routine work at home stays the player's decision,** assigned in the Council screen; once assigned it runs passively, and passive work costs far less than its one-off version so the loop can't break. Rejected: the council deciding for you (automatic portfolios).
+- **War goals: Claim a district, Vassalize, Subjugate.** Rejected: tribute as a war goal (it stays the raiders' demand, outside war). The details, and replacing the 2026-09-24 rule that war is simply declared with a cost and a 15-day AI warning, are in doc 15 for the owner to mark up.
+
 **2026-09-29 (characters first; see 14-characters-first.md, partly decided)**
 
 - **Direction: the dynasty becomes the reason to play and replay; the territory is its stage.** Doc 14 revises the spine's priority (the one-sentence wording is still open). Rejected: carrying on adding territory and economy systems, which playtests say don't bring players back.

@@ -53,6 +53,8 @@ var caretaker_until: int = 0
 var last_succession_day: int = -1000
 # Timed effects from choice events: [{"label", "summary", "until", "effects": {name: value}, "venture_odds": {}, "skill_odds": {}}]
 var timed_effects: Array = []
+# Materials and arms bought lately with wealth: each unit raises the price a little, easing back over time
+var bought: Dictionary = {"materials": 0.0, "arms": 0.0}
 # The next day a choice event may come to this faction (the everyday pulse, every 3-4 months)
 var next_event_day: int = 90
 # The day each event last came to this faction (so everyday ones don't repeat soon)
@@ -77,10 +79,10 @@ const RESOURCE_NAMES = {"supplies": "food", "manpower": "manpower", "materials":
 # Where each resource comes from, for "you can't afford this" messages
 const RESOURCE_SOURCES = {
 	"supplies": "Secure Food, Allotments, Trade Runs",
-	"materials": "Scavenge ruins, Trade Runs (spend wealth), Salvage Yards, Recycling Works (never run out)",
+	"materials": "Scavenge ruins, buy with wealth (Economy window), Trade Runs, Salvage Yards, Recycling Works (never run out)",
 	"wealth": "taxes (more people), Markets, trade agreements",
 	"renown": "deeds (the milestones in the Ambitions window) and triumphs",
-	"arms": "Gather Weapons",
+	"arms": "Gather Weapons, or buy with wealth (Economy window)",
 	"manpower": "grows from the food your districts produce",
 }
 
@@ -174,7 +176,7 @@ func pay(costs: Dictionary):
 func to_dict() -> Dictionary:
 	return {
 		"id": id, "name": display_name, "color": color.to_html(false), "player": is_player,
-		"manpower": manpower, "supplies": supplies, "materials": materials, "arms": arms, "wealth": wealth, "starving": starving, "broke": broke, "home_id": home_id, "renown": renown, "reputation": reputation, "deeds_done": deeds_done.duplicate(), "ambition": ambition, "ambition_days_left": ambition_days_left, "ambitions_done": ambitions_done.duplicate(), "ambitions_closed": ambitions_closed.duplicate(), "government": government, "reform_locked_until": reform_locked_until, "caretaker_until": caretaker_until, "last_succession_day": last_succession_day, "timed_effects": timed_effects.duplicate(true), "next_event_day": next_event_day, "event_last": event_last.duplicate(), "stats": stats.duplicate(), "scouted": scouted.duplicate(), "disrepair": disrepair, "minor": minor, "blurb": blurb, "designated_heir": designated_heir, "lean": lean.duplicate(),
+		"manpower": manpower, "supplies": supplies, "materials": materials, "arms": arms, "wealth": wealth, "starving": starving, "broke": broke, "home_id": home_id, "renown": renown, "reputation": reputation, "deeds_done": deeds_done.duplicate(), "ambition": ambition, "ambition_days_left": ambition_days_left, "ambitions_done": ambitions_done.duplicate(), "ambitions_closed": ambitions_closed.duplicate(), "government": government, "reform_locked_until": reform_locked_until, "caretaker_until": caretaker_until, "last_succession_day": last_succession_day, "timed_effects": timed_effects.duplicate(true), "next_event_day": next_event_day, "event_last": event_last.duplicate(), "stats": stats.duplicate(), "scouted": scouted.duplicate(), "disrepair": disrepair, "minor": minor, "blurb": blurb, "designated_heir": designated_heir, "lean": lean.duplicate(), "bought": bought.duplicate(),
 		"traits": traits.to_dict(), "ai": ai.to_dict() if ai else {},
 	}
 
@@ -200,6 +202,7 @@ static func from_dict(data: Dictionary) -> Faction:
 	f.caretaker_until = int(data["caretaker_until"])
 	f.last_succession_day = int(data["last_succession_day"])
 	f.timed_effects = data["timed_effects"]
+	f.bought = data["bought"]
 	f.next_event_day = int(data["next_event_day"])
 	f.event_last = data["event_last"]
 	f.stats = data["stats"]

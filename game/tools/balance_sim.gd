@@ -23,6 +23,18 @@ const WATCH = {
 	"bribes": "to buy off rival",
 	"ambitions": "achieved ",
 	"wounds": "was wounded",
+	"claims": "justifying a claim",
+	"gave_in": "gave in to the",
+	"goal_won": "have won (",
+	"goal_failed": "held out against",
+	"backed": "will back the",
+	"sent_early": "early",
+	"houses_founded": "Their ruling family is now House",
+	"cadet_houses": "founds House",
+	"house_revolts": "broke away from the",
+	"house_calls": "answers the call",
+	"marriages": " marries ",
+	"bound_families": "the two families are bound",
 }
 
 func _on_event(text: String, _kind: String):

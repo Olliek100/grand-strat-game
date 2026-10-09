@@ -17,6 +17,8 @@ var baseline: Dictionary = {}
 var modifiers: Dictionary = {}
 # Faction id that has offered peace and is waiting for an answer, or ""
 var peace_offered_by: String = ""
+# The player has been told this war could end now (said once per war)
+var peace_ready_told: bool = false
 
 # Treaties
 var trade: bool = false
@@ -38,6 +40,15 @@ var last_demand: Dictionary = {}
 var spare_until: Dictionary = {}
 # That side raids the other with better odds until this day (a demand refused, a threat that backfired)
 var bold_until: Dictionary = {}
+
+# A war goal one side is pressing on the other (doc 15, P2), or {} if none:
+# {"by", "goal" (see data/war_goals.json), "district" (id, or -1), "reason" ("" if none), "stage" ("justifying",
+# "ultimatum" or "war"), "ready_day" (justified on this day), "deadline" (the ultimatum's answer is due)}
+var claim: Dictionary = {}
+# War score from the claimant's side, before exhaustion is counted (see CityMap.war_score)
+var war_points: float = 0.0
+# Marriages between the two factions' families (doc 16, H3): [[a character id, b character id], ...]
+var marriages: Array = []
 
 func _init(p_a: String, p_b: String):
 	a = p_a
@@ -81,16 +92,17 @@ func treaty_labels(viewer_id: String) -> Array:
 	elif pact:
 		labels.append("Non-aggression pact")
 	if overlord != "":
-		labels.append("Your vassal" if overlord == viewer_id else ("Your overlord" if other(viewer_id) == overlord else "Vassalage"))
+		labels.append("Your tributary" if overlord == viewer_id else ("Your suzerain" if other(viewer_id) == overlord else "Tributary"))
 	return labels
 
 func to_dict() -> Dictionary:
 	return {
 		"a": a, "b": b, "at_war": at_war, "war_start_day": war_start_day, "truce_until_day": truce_until_day,
-		"exhaustion": exhaustion.duplicate(), "opinion": opinion.duplicate(), "peace_offered_by": peace_offered_by,
+		"exhaustion": exhaustion.duplicate(), "opinion": opinion.duplicate(), "peace_offered_by": peace_offered_by, "peace_ready_told": peace_ready_told,
 		"trade": trade, "pact": pact, "alliance": alliance, "overlord": overlord, "vassal_since_day": vassal_since_day, "treaty_until_day": treaty_until_day,
 		"baseline": baseline.duplicate(), "modifiers": modifiers.duplicate(true), "lapse_warned": lapse_warned,
 		"last_raid": last_raid.duplicate(), "last_demand": last_demand.duplicate(), "spare_until": spare_until.duplicate(), "bold_until": bold_until.duplicate(),
+		"claim": claim.duplicate(), "war_points": war_points, "marriages": marriages.duplicate(true),
 	}
 
 static func from_dict(data: Dictionary) -> Relation:
@@ -101,6 +113,7 @@ static func from_dict(data: Dictionary) -> Relation:
 	r.exhaustion = data["exhaustion"]
 	r.opinion = data["opinion"]
 	r.peace_offered_by = data["peace_offered_by"]
+	r.peace_ready_told = data["peace_ready_told"]
 	r.trade = data["trade"]
 	r.pact = data["pact"]
 	r.alliance = data["alliance"]
@@ -110,6 +123,9 @@ static func from_dict(data: Dictionary) -> Relation:
 	r.baseline = data["baseline"]
 	r.modifiers = data["modifiers"]
 	r.lapse_warned = data["lapse_warned"]
+	r.claim = data["claim"]
+	r.war_points = data["war_points"]
+	r.marriages = data["marriages"]
 	for key in ["last_raid", "last_demand", "spare_until", "bold_until"]:
 		var saved: Dictionary = data[key]
 		for fid in saved:

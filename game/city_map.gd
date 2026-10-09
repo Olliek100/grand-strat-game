@@ -10,7 +10,7 @@ signal first_contact(faction_id: String)
 # Big moments that deserve a pop-up: first contact, war on you, civil war, a leader's death
 signal major_event(title: String, text: String, faction_id: String)
 
-const SAVE_VERSION = 9
+const SAVE_VERSION = 16
 const SAVE_PATH = "user://savegame.sav"
 
 const DAYS_PER_MONTH = 30
@@ -181,6 +181,7 @@ func _place_minor(faction_id: String, near_id: String):
 	best.grievance = 25.0
 	best.population = maxf(best.population, 45.0)
 	best.hazard = minf(best.hazard, 0.15)
+	best.garrison = garrison_ceiling(best)
 
 # Each faction starts with a single shelter district
 func _claim_home(faction_id: String, near: Vector2):
@@ -196,6 +197,7 @@ func _claim_home(faction_id: String, near: Vector2):
 	home.grievance = 25.0
 	home.hazard = 0.05
 	home.population = 80.0
+	home.garrison = garrison_ceiling(home)
 
 # --- Queries ------------------------------------------------------------------
 
@@ -454,6 +456,11 @@ func add_proposal(action_id: String, from_id: String):
 		else:
 			event.emit(text, "alert")
 		return
+	if GameData.diplomacy_action(action_id)["kind"] == "tribute":
+		var offered = Diplomacy._amount_text(Diplomacy.tribute_price(self, from_id, player_id))
+		event.emit("The %s offer tribute (%s) if you stop raiding them for %d days. Accept or decline in Diplomacy (F4)." % [
+			faction_name(from_id), offered, GameData.diplomacy_action("tribute")["spare_days"]], "alert")
+		return
 	event.emit("The %s propose %s. Answer in Diplomacy (F4)." % [faction_name(from_id), GameData.diplomacy_action(action_id).get("proposal", action_id)], "alert")
 
 func answer_proposal(index: int, accept: bool, expired: bool = false):
@@ -462,6 +469,10 @@ func answer_proposal(index: int, accept: bool, expired: bool = false):
 	var p = proposals[index]
 	proposals.remove_at(index)
 	if not factions.has(p["from"]):
+		return
+	# An ultimatum: give in, or it's war (a lapsed one is refused)
+	if p["action"] == "ultimatum":
+		answer_ultimatum(relation(p["from"], player_id), accept)
 		return
 	if accept and Diplomacy.check_action(self, p["action"], p["from"], player_id, true) == "":
 		Diplomacy.form_treaty(self, p["action"], p["from"], player_id)
@@ -482,7 +493,7 @@ func check_declare_war(faction_id: String, target_id: String) -> String:
 	if r.protected():
 		return "You have a treaty with them (break it first)"
 	if overlord_of(faction_id) != "":
-		return "Vassals can't declare war"
+		return "Tributaries can't start wars"
 	if day < r.truce_until_day:
 		return "Truce holds for %d more days" % (r.truce_until_day - day)
 	if not shares_border(faction_id, target_id):
@@ -507,6 +518,10 @@ func call_to_arms(attacker_id: String, defender_id: String):
 		_join_war(ally_id, attacker_id, defender_id)
 	for vassal_id in vassals_of(attacker_id):
 		_join_war(vassal_id, defender_id, attacker_id)
+	# The attacker's allies stand with it too, so a weak faction with friends can press its claim (doc 15)
+	for ally_id in factions:
+		if ally_id != attacker_id and ally_id != defender_id and relation(attacker_id, ally_id).alliance:
+			_join_war(ally_id, defender_id, attacker_id)
 
 # Puts two factions at war (no checks); ends any treaties between them
 func start_war(faction_id: String, target_id: String):
@@ -516,6 +531,7 @@ func start_war(faction_id: String, target_id: String):
 	r.war_start_day = day
 	r.peace_offered_by = ""
 	r.exhaustion = {r.a: 0.0, r.b: 0.0}
+	r.peace_ready_told = false
 	r.trade = false
 	r.pact = false
 	r.alliance = false
@@ -538,6 +554,7 @@ func _join_war(joiner_id: String, enemy_id: String, friend_id: String):
 	r.war_start_day = day
 	r.peace_offered_by = ""
 	r.exhaustion = {r.a: 0.0, r.b: 0.0}
+	r.peace_ready_told = false
 	r.trade = false
 	var text = "The %s join the war on the side of the %s against the %s." % [faction_name(joiner_id), faction_name(friend_id), faction_name(enemy_id)]
 	if joiner_id == player_id:
@@ -570,6 +587,8 @@ func make_peace(faction_id: String, target_id: String) -> String:
 	r.at_war = false
 	war_cache.clear()
 	r.peace_offered_by = ""
+	# A white peace: any war goal lapses
+	r.claim = {}
 	r.truce_until_day = day + truce_days
 	if r.involves(player_id):
 		event.emit("Peace with the %s. A truce holds for %d days; borders stay where they are." % [
@@ -586,11 +605,406 @@ func offer_peace(faction_id: String, target_id: String):
 	if target_id == player_id:
 		event.emit("The %s offer peace. Accept it in Diplomacy (F4), or fight on." % faction_name(faction_id), "alert")
 
-func announce_war_plan(faction_id: String, target_id: String, days: int):
+# --- War goals and ultimatums (doc 15, P2) -------------------------------------------------
+# No war without a goal: the claimant justifies it over some days (the target is told at once), then sends an
+# ultimatum. Accepted, the terms apply without a fight; refused, it's war over that goal, ended when the war
+# score reaches its price, a side is worn out, or by a white peace. Civil wars and allies joining in have no goal.
+
+const WAR_GOALS = ["claim", "subjugate", "vassalize"]
+
+# Why this faction has cause against the target ("" if none): a reason halves the justification
+func claim_reason(faction_id: String, target_id: String) -> String:
+	var r = relation(faction_id, target_id)
+	if r.last_raid[target_id] > 0 and day - r.last_raid[target_id] <= int(GameData.rule("menace_memory_days")):
+		return "they raided you"
+	if r.last_demand[target_id] > 0 and day - r.last_demand[target_id] <= int(GameData.rule("menace_memory_days")):
+		return "they demanded tribute of you"
+	if opinion_of(target_id, faction_id) < -25.0 or opinion_of(faction_id, target_id) < -25.0:
+		return "bad blood between you"
+	return ""
+
+# The district a claim would name: the one picked, if it can be, or their most populous on your border
+func claim_district(faction_id: String, target_id: String, preferred: District = null) -> District:
+	if preferred and preferred.owner_id() == target_id and borders_territory(faction_id, preferred):
+		return preferred
+	var best: District = null
+	for d in districts:
+		if d.owner_id() == target_id and borders_territory(faction_id, d) and (best == null or d.population > best.population):
+			best = d
+	return best
+
+func justify_days(faction_id: String, target_id: String, goal_id: String) -> int:
+	var days = int(GameData.war_goal(goal_id)["justify_days"])
+	return days if claim_reason(faction_id, target_id) != "" else int(days * GameData.rule("claim_no_reason_mult"))
+
+# What justifying costs: the goal's renown and wealth, half with a reason (a faction that's raided has its cause)
+func justify_cost(faction_id: String, target_id: String, goal_id: String) -> Dictionary:
+	var cost: Dictionary = GameData.war_goal(goal_id)["cost"].duplicate()
+	if claim_reason(faction_id, target_id) != "":
+		for resource_type in cost:
+			cost[resource_type] = ceilf(cost[resource_type] / 2.0)
+	return cost
+
+# The promise a claim would break ("" if none): a pact, an alliance or a truce. It doesn't stop you;
+# breaking your word costs your name with everyone for years
+func oath_broken(faction_id: String, target_id: String) -> String:
+	var r = relation(faction_id, target_id)
+	if marriage_tie(faction_id, target_id):
+		return "the marriage between your families"
+	if r.alliance:
+		return "your alliance"
+	if r.pact:
+		return "your non-aggression pact"
+	if day < r.truce_until_day:
+		return "the truce"
+	return ""
+
+# "" if this faction can start justifying this goal against the target, otherwise why not
+func check_justify(faction_id: String, target_id: String, goal_id: String, district: District = null) -> String:
+	if faction_id == target_id or not factions.has(target_id) or goal_id not in WAR_GOALS:
+		return "No such faction"
+	var r = relation(faction_id, target_id)
+	if not r.claim.is_empty():
+		return "A claim between you is already under way"
+	for other in factions:
+		if other != faction_id and relation(faction_id, other).claim.get("by", "") == faction_id and relation(faction_id, other).claim["stage"] != "war":
+			return "You're already pressing a claim on the %s" % faction_name(other)
+	if r.at_war:
+		return "Already at war"
+	if overlord_of(faction_id) != "":
+		return "Tributaries can't start wars"
+	if r.overlord == faction_id:
+		return "They're already your tributary (absorb them in Diplomacy instead)"
+	# Their strength doesn't stop you (the war decides), nor does a treaty or truce (it costs your name: see justify)
+	if not shares_border(faction_id, target_id):
+		return "You don't share a border with them"
+	if GameData.war_goal(goal_id)["needs_district"] and claim_district(faction_id, target_id, district) == null:
+		return "None of their districts borders yours"
+	return factions[faction_id].shortfall(justify_cost(faction_id, target_id, goal_id))
+
+func justify(faction_id: String, target_id: String, goal_id: String, district: District = null) -> String:
+	var err = check_justify(faction_id, target_id, goal_id, district)
+	if err != "":
+		return err
+	var r = relation(faction_id, target_id)
+	var reason = claim_reason(faction_id, target_id)
+	var d = claim_district(faction_id, target_id, district) if GameData.war_goal(goal_id)["needs_district"] else null
+	var days = justify_days(faction_id, target_id, goal_id)
+	factions[faction_id].pay(justify_cost(faction_id, target_id, goal_id))
+	# Breaking a treaty or truce to press a claim: allowed, but everyone remembers it for years
+	var oath = oath_broken(faction_id, target_id)
+	if oath != "":
+		if r.pact or r.alliance:
+			Diplomacy.break_treaty(self, faction_id, target_id, "pact")
+		r.truce_until_day = day
+		for other in factions:
+			if other != faction_id:
+				change_opinion(other, faction_id, GameData.rule("claim_oathbreaker_opinion"), "oathbreaker")
+		event.emit("The %s broke %s with the %s to press a claim. Everyone will remember it for years." % [
+			faction_name(faction_id), oath.replace("your", "their"), faction_name(target_id)], "alert" if player_id in [faction_id, target_id] else "info")
+	r.claim = {"by": faction_id, "goal": goal_id, "district": d.id if d else -1, "reason": reason, "stage": "justifying",
+		"ready_day": day + days, "deadline": 0}
+	r.war_points = 0.0
+	# The target resents it; onlookers think less of a faction that presses claims, more so without cause
+	change_opinion(target_id, faction_id, GameData.rule("claim_target_opinion"), "claimed_us")
+	for other in factions:
+		if other != faction_id and other != target_id:
+			change_opinion(other, faction_id, GameData.rule("claim_onlooker_opinion" if reason != "" else "claim_unjust_opinion"), "warmonger")
+	var what = claim_text(r, player_id)
 	if target_id == player_id:
-		event.emit("The %s are massing on your border. War is likely within %d days." % [faction_name(faction_id), days], "alert")
+		event.emit("The %s are justifying a claim on you: %s%s. Their ultimatum comes in %d days." % [faction_name(faction_id), what,
+			(" (because %s)" % reason) if reason != "" else " (with no cause: everyone thinks less of them)", days], "alert")
+	elif faction_id == player_id:
+		event.emit("You're justifying a claim on the %s: %s. Your ultimatum goes out in %d days%s." % [faction_name(target_id), what, days,
+			"" if reason != "" else " (no cause: half as long again, full price, and everyone thinks less of you)"], "info")
 	else:
-		event.emit("The %s are massing on the border of the %s." % [faction_name(faction_id), faction_name(target_id)], "info")
+		event.emit("The %s are justifying a claim on the %s: %s." % [faction_name(faction_id), faction_name(target_id), what], "info")
+	return ""
+
+# The claim in words: "claim Pylon Fields", "make them a tributary", "absorb them" ("you" when it's the viewer's side)
+func claim_text(r: Relation, viewer_id: String = "") -> String:
+	var them = "you" if viewer_id != "" and viewer_id == claim_target(r) else "them"
+	match r.claim.get("goal", ""):
+		"claim":
+			return "claim %s" % districts[int(r.claim["district"])].district_name
+		"subjugate":
+			return "make %s a tributary" % them
+		"vassalize":
+			return "absorb %s" % them
+	return ""
+
+# The side a claim is pressed against
+func claim_target(r: Relation) -> String:
+	return r.other(r.claim["by"])
+
+# War score from the claimant's side, -100 to 100: fights won and lost, land taken, and who's more worn down
+func war_score(r: Relation) -> float:
+	if r.claim.is_empty():
+		return 0.0
+	var by: String = r.claim["by"]
+	var against = r.other(by)
+	return clampf(r.war_points + (r.exhaustion[against] - r.exhaustion[by]) * GameData.rule("war_score_exhaustion"), -100.0, 100.0)
+
+# Chance an AI target gives in to an ultimatum: likelier the more the claimant outweighs it and its friends,
+# less likely the harsher the goal
+func ultimatum_acceptance(r: Relation) -> float:
+	return acceptance_of_goal(r.claim["by"], r.other(r.claim["by"]), r.claim["goal"])
+
+func acceptance_of_goal(by: String, against: String, goal_id: String) -> float:
+	var ratio = side_strength(by, against) / maxf(1.0, side_strength(against, by))
+	var need: float = GameData.war_goal(goal_id)["accept_need"]
+	# Giving up a district is easier than giving up your independence, or your existence
+	return clampf(0.5 + (ratio - need) / need, 0.05, GameData.war_goal(goal_id)["accept_max"])
+
+# A faction's strength in a quarrel with `enemy_id`, counting the friends who'd fight beside it:
+# allies and backers of its claim in full, tributaries at the share of their force they bring
+func side_strength(faction_id: String, enemy_id: String) -> float:
+	var total = faction_strength(faction_id)
+	var backers: Array = claim_backers(faction_id, enemy_id)
+	for fid in factions:
+		if fid == faction_id or fid == enemy_id:
+			continue
+		var r = relation(faction_id, fid)
+		if r.alliance or r.overlord == fid or fid in backers:
+			total += faction_strength(fid)
+		elif r.overlord == faction_id:
+			total += faction_strength(fid) * GameData.rule("tributary_war_share")
+	return total
+
+# Factions that have promised to back this faction's claim on `enemy_id`
+func claim_backers(faction_id: String, enemy_id: String) -> Array:
+	var r = relation(faction_id, enemy_id)
+	if r.claim.get("by", "") != faction_id:
+		return []
+	return r.claim.get("backers", []).filter(func(fid): return factions.has(fid))
+
+# How many times the other side the claimant's side is (with friends and backers), against what the goal needs
+func claim_strength_ratio(r: Relation) -> float:
+	var by: String = r.claim["by"]
+	return side_strength(by, r.other(by)) / maxf(1.0, side_strength(r.other(by), by))
+
+# "" if the claimant can send its ultimatum before the claim is fully justified: only when its side is strong
+# enough that the target would likely give in (the strength the goal needs)
+func check_send_early(faction_id: String, other_id: String) -> String:
+	var r = relation(faction_id, other_id)
+	if r.claim.get("by", "") != faction_id or r.claim["stage"] != "justifying":
+		return "You have no claim being justified against them"
+	var need: float = GameData.war_goal(r.claim["goal"])["accept_need"]
+	var ratio = claim_strength_ratio(r)
+	if ratio < need:
+		return "You need %.1fx their strength to send it early (you're %.1fx with your friends and backers)" % [need, ratio]
+	return ""
+
+func send_ultimatum_early(faction_id: String, other_id: String) -> String:
+	var err = check_send_early(faction_id, other_id)
+	if err != "":
+		return err
+	if faction_id == player_id:
+		event.emit("You send your ultimatum to the %s early: your strength makes the case." % faction_name(other_id), "info")
+	_send_ultimatum(relation(faction_id, other_id))
+	return ""
+
+# The claimant drops its claim before any war (what it paid is gone; the grudge fades in time)
+func withdraw_claim(faction_id: String, other_id: String) -> String:
+	var r = relation(faction_id, other_id)
+	if r.claim.get("by", "") != faction_id or r.claim["stage"] == "war":
+		return "You have no claim to withdraw against them"
+	proposals = proposals.filter(func(p): return not (p["action"] == "ultimatum" and p["from"] == faction_id))
+	r.claim = {}
+	event.emit("The %s withdrew their claim on the %s." % [faction_name(faction_id), faction_name(other_id)], "info")
+	return ""
+
+# Another faction promises to back a claim: it counts toward the claimant's strength and joins the war if it comes
+func add_backer(claimant_id: String, backer_id: String) -> String:
+	for fid in factions:
+		var r = relation(claimant_id, fid)
+		if fid != claimant_id and fid != backer_id and r.claim.get("by", "") == claimant_id and r.claim["stage"] != "war":
+			var backers: Array = r.claim.get("backers", [])
+			if backer_id not in backers:
+				backers.append(backer_id)
+			r.claim["backers"] = backers
+			event.emit("The %s will back the %s's claim on the %s." % [faction_name(backer_id), faction_name(claimant_id), faction_name(fid)],
+				"good" if claimant_id == player_id else ("alert" if fid == player_id else "info"))
+			return fid
+	return ""
+
+# The claim this faction is pressing (not yet at war), as its target's id ("" if none)
+func pressing_claim_on(faction_id: String) -> String:
+	for fid in factions:
+		if fid != faction_id:
+			var r = relation(faction_id, fid)
+			if r.claim.get("by", "") == faction_id and r.claim["stage"] != "war":
+				return fid
+	return ""
+
+# The claim is justified: the ultimatum goes out. The player answers theirs; the AI decides on the odds
+func _send_ultimatum(r: Relation):
+	var by: String = r.claim["by"]
+	var against = claim_target(r)
+	r.claim["stage"] = "ultimatum"
+	r.claim["deadline"] = day + int(GameData.rule("ultimatum_days"))
+	var demand = String(GameData.war_goal(r.claim["goal"])["demand"]).replace("{district}", districts[int(r.claim["district"])].district_name if int(r.claim["district"]) >= 0 else "")
+	if against == player_id and factions[against].ai == null:
+		proposals.append({"action": "ultimatum", "from": by, "expires_day": r.claim["deadline"]})
+		major_event.emit("Ultimatum from the %s" % faction_name(by), "The %s demand that you %s. Accept and it's done, with no fight. Refuse, or let %d days pass, and it's war over it.\n\nAnswer in Diplomacy (F4), Proposals." % [
+			faction_name(by), demand, GameData.rule("ultimatum_days")], by)
+		return
+	answer_ultimatum(r, rng.randf() < ultimatum_acceptance(r))
+
+func answer_ultimatum(r: Relation, accept: bool):
+	if r.claim.is_empty() or r.claim["stage"] != "ultimatum":
+		return
+	var by: String = r.claim["by"]
+	var against = claim_target(r)
+	proposals = proposals.filter(func(p): return not (p["action"] == "ultimatum" and p["from"] == by))
+	if accept:
+		var text = "The %s gave in to the %s's ultimatum: %s." % [faction_name(against), faction_name(by), claim_text(r, player_id)]
+		event.emit(text, "good" if by == player_id else ("bad" if against == player_id else "info"))
+		_apply_war_goal(r)
+		r.claim = {}
+		return
+	r.claim["stage"] = "war"
+	r.war_points = 0.0
+	start_war(by, against)
+	call_to_arms(by, against)
+	# Those who promised to back the claim keep their word
+	for backer_id in r.claim.get("backers", []):
+		if factions.has(backer_id):
+			_join_war(backer_id, against, by)
+	if by == player_id or against == player_id:
+		event.emit("The %s refused the ultimatum: war with the %s over it (%s). The war ends when the war score reaches %d, a side is worn out, or by peace." % [
+			faction_name(against), faction_name(by if against == player_id else against), claim_text(r, player_id), GameData.war_goal(r.claim["goal"])["price"]], "alert")
+
+# "" if the claimant can end the war on its terms now, otherwise why not
+func check_enforce(faction_id: String, other_id: String) -> String:
+	var r = relation(faction_id, other_id)
+	if r.claim.is_empty() or r.claim["stage"] != "war" or r.claim["by"] != faction_id:
+		return "You have no war goal against them"
+	var price: float = GameData.war_goal(r.claim["goal"])["price"]
+	if war_score(r) >= price:
+		return ""
+	if r.claim["goal"] == "vassalize" and factions.has(other_id) and districts[factions[other_id].home_id].owner_id() == faction_id:
+		return ""
+	return "War score %d of %d needed" % [war_score(r), price]
+
+func enforce_claim(faction_id: String, other_id: String) -> String:
+	var err = check_enforce(faction_id, other_id)
+	if err != "":
+		return err
+	_end_claim_war(relation(faction_id, other_id), true)
+	return ""
+
+# The side a claim is pressed against gives in, in the middle of the war
+func concede_claim(faction_id: String, other_id: String) -> String:
+	var r = relation(faction_id, other_id)
+	if r.claim.is_empty() or r.claim["stage"] != "war" or claim_target(r) != faction_id:
+		return "They have no war goal against you"
+	_end_claim_war(r, true)
+	return ""
+
+# A war over a goal ends: the claimant gets its terms, or (worn out first) pays and backs off for two years
+func _end_claim_war(r: Relation, claimant_won: bool):
+	var by: String = r.claim["by"]
+	var against = r.other(by)
+	var text = ""
+	if claimant_won:
+		text = "The war is over: the %s have won (%s)." % [faction_name(by), claim_text(r, player_id)]
+	else:
+		var reparations: float = minf(GameData.rule("war_defeat_wealth"), factions[by].wealth)
+		factions[by].wealth -= reparations
+		factions[against].wealth += reparations
+		factions[against].stats["wars_won"] += 1
+		text = "The war is over: the %s held out against the %s, who pay %d wealth." % [faction_name(against), faction_name(by), reparations]
+	event.emit(text, "alert" if r.involves(player_id) else "info")
+	if claimant_won:
+		factions[by].stats["wars_won"] += 1
+		_apply_war_goal(r)
+	r.claim = {}
+	if r.at_war:
+		r.at_war = false
+		war_cache.clear()
+		r.peace_offered_by = ""
+		r.truce_until_day = day + int(GameData.rule("truce_days"))
+
+# The terms take effect: the district changes hands, they become a tributary, or they're absorbed
+func _apply_war_goal(r: Relation):
+	var by: String = r.claim["by"]
+	var against = r.other(by)
+	match r.claim["goal"]:
+		"claim":
+			var d: District = districts[int(r.claim["district"])]
+			if d.owner_id() != by:
+				var owner_before = d.owner_id()
+				var share = maxf(d.share(against), 51.0)
+				d.influence.erase(against)
+				d.add_influence(by, share)
+				d.garrison = 0.0
+				_announce_ownership_change(d, owner_before)
+		"subjugate":
+			r.overlord = by
+			r.vassal_since_day = day
+			r.pact = false
+			r.alliance = false
+		"vassalize":
+			# The player's faction is never absorbed (as with "Integrate"): it becomes a tributary and plays on
+			if against == player_id:
+				r.overlord = by
+				r.vassal_since_day = day
+				r.pact = false
+				r.alliance = false
+				event.emit("The %s couldn't absorb you, but you are now their tributary: you pay them tribute in food, materials and wealth, trade only, and start no wars. Declare independence in Diplomacy when you're strong enough." % faction_name(by), "alert")
+			else:
+				_absorb(against, by)
+
+# Vassalize: their land and people merge into the claimant's; their ruling family comes too, as a house of its own
+func _absorb(faction_id: String, into_id: String):
+	var people = everyone_of(faction_id)
+	var lands = districts.filter(func(d): return d.owner_id() == faction_id)
+	# Their ruling family becomes a house in the absorbing faction, holding the land it had (doc 16)
+	var ruling = people.filter(func(c): return c.family or c.is_leader)
+	var dynasty = ruling[0].dynasty if not ruling.is_empty() else faction_name(faction_id)
+	for c in people:
+		c.faction_id = into_id
+		c.is_leader = false
+		c.post = ""
+		c.family = false
+		c.change_loyalty(-20.0, "absorbed")
+	var name = faction_name(faction_id)
+	retire_faction(faction_id, into_id, people)
+	var held = lands.filter(func(d): return d.owner_id() == into_id)
+	if not ruling.is_empty() and not held.is_empty():
+		_found_house(into_id, dynasty if dynasty != "" else name, ruling, held)
+	event.emit("The %s have absorbed the %s: their land, people and stores. Their ruling family is now House %s, holding %d districts." % [
+		faction_name(into_id), name, dynasty, held.size()], "alert" if into_id == player_id else "info")
+
+# Daily: justifications ripen into ultimatums; wars over a goal end when it's taken or a side is worn out
+func _update_claims():
+	for r in relations.values():
+		if r.claim.is_empty():
+			continue
+		var by: String = r.claim["by"]
+		if not factions.has(by) or not factions.has(r.other(by)):
+			r.claim = {}
+			continue
+		match r.claim["stage"]:
+			"justifying":
+				if day >= int(r.claim["ready_day"]):
+					_send_ultimatum(r)
+			"ultimatum":
+				# The player's answer is a proposal; one left too long is a refusal
+				if day >= int(r.claim["deadline"]) and not proposals.any(func(p): return p["action"] == "ultimatum" and p["from"] == by):
+					answer_ultimatum(r, false)
+			"war":
+				if not r.at_war:
+					r.claim = {}
+					continue
+				var against = r.other(by)
+				if r.claim["goal"] == "claim" and districts[int(r.claim["district"])].owner_id() == by:
+					_end_claim_war(r, true)
+				elif r.exhaustion[by] >= 100.0:
+					_end_claim_war(r, false)
+				elif r.exhaustion[against] >= 100.0:
+					_end_claim_war(r, true)
 
 func feed_trait_by_name(f: Faction, trait_name: String, amount: float):
 	if f.traits.add_faction_trait_value(trait_name, amount) == 1:
@@ -613,6 +1027,11 @@ func _simulate_relations():
 			r.recompute_opinion(fid)
 			if r.at_war:
 				r.exhaustion[fid] = minf(100.0, r.exhaustion[fid] + daily_exhaustion)
+		# Tell the player once when a war could end now, so it doesn't run on unseen
+		if r.at_war and r.involves(player_id) and not r.peace_ready_told and check_peace(player_id, r.other(player_id)) == "":
+			r.peace_ready_told = true
+			event.emit("The %s would accept peace now (weariness: yours %d, theirs %d). Make peace in Diplomacy (F4), or fight on." % [
+				faction_name(r.other(player_id)), r.exhaustion[player_id], r.exhaustion[r.other(player_id)]], "alert")
 		# Warn both sides a month before a pact or alliance lapses
 		var warning = int(GameData.rule("treaty_warning_days"))
 		if (r.pact or r.alliance) and r.overlord == "" and not r.lapse_warned and r.treaty_until_day - day <= warning:
@@ -638,7 +1057,8 @@ func _simulate_relations():
 			d.grievance = minf(100.0, d.grievance + 0.05)
 
 # Removes a faction from the game. With into_id, it merges: its land, crew and stores pass to that faction.
-func retire_faction(faction_id: String, into_id: String = ""):
+# `keep`: people already moved into the absorbing faction who stay whatever its captain limit (a house taken in)
+func retire_faction(faction_id: String, into_id: String = "", keep: Array = []):
 	var f: Faction = factions.get(faction_id)
 	if f == null:
 		return
@@ -676,7 +1096,7 @@ func retire_faction(faction_id: String, into_id: String = ""):
 				characters.erase(ch)
 	# The absorbing faction keeps its best people, up to its captain limit; the rest drift away
 	if into:
-		var hired = characters_of(into_id).filter(func(c): return not c.family)
+		var hired = characters_of(into_id).filter(func(c): return not c.family and c not in keep)
 		hired.sort_custom(func(a, b): return a.best_skill_value() > b.best_skill_value())
 		for k in range(captain_cap(into_id), hired.size()):
 			if not leader_busy(hired[k]) and hired[k].post == "":
@@ -731,9 +1151,57 @@ func venture_target(faction_id: String, venture_id: String, district: District) 
 	return ""
 
 # What launching a venture costs, including any extra funding
-func venture_cost(venture_id: String, funding: int) -> Dictionary:
+# --- Buying with wealth (dead-end fix after the P1 playtest) ------------------------------------
+# Wealth buys materials and arms at once. Each unit bought lately raises the price a little, so wealth
+# eases a shortage but can't replace scavenging, salvage and Gather Weapons. The AI buys the same way.
+
+const BUYABLE = ["materials", "arms"]
+
+# What `amount` more units cost now: each one a little dearer than the last
+func buy_price(faction_id: String, resource_type: String, amount: int) -> float:
+	var base: float = GameData.rule("buy_price")[resource_type]
+	var recent: float = factions[faction_id].bought.get(resource_type, 0.0)
+	var rise: float = GameData.rule("buy_price_rise")
+	return base * (amount + rise * (amount * recent + amount * (amount - 1) / 2.0))
+
+# "" if the faction can buy this now, otherwise why not
+func check_buy(faction_id: String, resource_type: String, amount: int) -> String:
+	var f: Faction = factions[faction_id]
+	if resource_type not in BUYABLE or amount <= 0:
+		return "Nothing to buy"
+	if resource_type == "arms" and f.arms + amount > GameData.rule("arms_cap"):
+		return "Your armoury holds %d arms (have %d)" % [GameData.rule("arms_cap"), f.arms]
+	var price = ceilf(buy_price(faction_id, resource_type, amount))
+	if f.wealth < price:
+		return "Need %d wealth (have %d)" % [price, f.wealth]
+	return ""
+
+func buy(faction_id: String, resource_type: String, amount: int) -> String:
+	var err = check_buy(faction_id, resource_type, amount)
+	if err != "":
+		return err
+	var f: Faction = factions[faction_id]
+	var price = ceilf(buy_price(faction_id, resource_type, amount))
+	f.wealth -= price
+	f.set(resource_type, f.get(resource_type) + amount)
+	f.bought[resource_type] = f.bought.get(resource_type, 0.0) + amount
+	if faction_id == player_id:
+		event.emit("Bought %d %s for %d wealth." % [amount, resource_type, price], "info")
+	return ""
+
+# Daily: the price eases back toward normal
+func _ease_prices():
+	for f in factions.values():
+		for resource_type in BUYABLE:
+			f.bought[resource_type] = f.bought.get(resource_type, 0.0) * (1.0 - GameData.rule("buy_recent_decay"))
+
+# A standing task's run costs a share of the one-off price (doc 15 / 08, owner's decision: passive work costs far less)
+func venture_cost(venture_id: String, funding: int, as_task: bool = false) -> Dictionary:
 	var def = GameData.venture(venture_id)
 	var cost: Dictionary = def["cost"].duplicate()
+	if as_task:
+		for resource_type in cost:
+			cost[resource_type] = ceilf(cost[resource_type] * GameData.rule("task_cost_mult"))
 	if funding > 0:
 		cost["wealth"] = cost.get("wealth", 0.0) + def["funding_cost"] * funding
 	return cost
@@ -747,9 +1215,16 @@ func recommended_plan(faction_id: String, venture_id: String, d: District, leade
 	var target_id = venture_target(faction_id, venture_id, d)
 	var safe: float = GameData.rule("no_disaster_odds")
 	var crew = int(def["crew"])
-	var odds: float = VentureSystem.compute_odds(venture_id, f, d, self, target_id, leader, crew, 0)["odds"]
 	var spare = int(f.manpower) - int(GameData.rule("plan_manpower_reserve"))
-	while crew < int(def["crew_range"][1]) and crew + 1 <= spare and odds < safe:
+	# A fight: the smallest crew that outnumbers the defence 2 to 1, or as many as can be spared
+	if def.has("force") and target_id != "":
+		var defence: float = defence_force(d, venture_id)["value"] * GameData.rule("ai_target_ratio")
+		crew = int(def["crew_range"][0])
+		while crew < crew_max(faction_id, venture_id) and crew + 1 <= spare and attack_force(faction_id, crew, leader)["value"] < defence:
+			crew += 1
+		return {"crew": crew, "funding": 0}
+	var odds: float = VentureSystem.compute_odds(venture_id, f, d, self, target_id, leader, crew, 0)["odds"]
+	while crew < crew_max(faction_id, venture_id) and crew + 1 <= spare and odds < safe:
 		var next: float = VentureSystem.compute_odds(venture_id, f, d, self, target_id, leader, crew + 1, 0)["odds"]
 		if next - odds < GameData.rule("plan_min_gain"):
 			break
@@ -829,6 +1304,104 @@ func defence_total(d: District) -> float:
 		total *= factor[1]
 	return total
 
+# --- Force (doc 15, P1): for raids and assaults, the balance of force sets the odds -----------------
+
+# The most a district's people will hold as its garrison: more people, more fighters (control makes them fight harder: defence_force)
+func garrison_ceiling(d: District) -> float:
+	var owner = d.owner_id()
+	if owner == "":
+		return 0.0
+	return d.population * GameData.rule("garrison_per_pop")
+
+# The largest crew this venture can take: for an assault, all your idle manpower (a trial, doc 15)
+func crew_max(faction_id: String, venture_id: String) -> int:
+	var def = GameData.venture(venture_id)
+	if def.get("force", {}).get("crew_up_to_manpower", false):
+		# A tributary fights its suzerain's wars with only part of its force (doc 15)
+		var share: float = GameData.rule("tributary_war_share") if overlord_of(faction_id) != "" else 1.0
+		return maxi(int(def["crew_range"][0]), int(factions[faction_id].manpower * share))
+	return int(def["crew_range"][1])
+
+# Arms a fight uses up: a share of those its crew carry (none needed to go: unarmed crew just count for less)
+func arms_used(faction_id: String, venture_id: String, crew: int) -> int:
+	if not GameData.venture(venture_id).has("force"):
+		return 0
+	return ceili(minf(factions[faction_id].arms, crew) * GameData.rule("arms_used_per_armed"))
+
+# Your attack force: the crew sent, how many of them carry arms, and how well they're led. {"value", "parts"}
+func attack_force(faction_id: String, crew: int, leader: Character) -> Dictionary:
+	var f: Faction = factions[faction_id]
+	var armed = minf(f.arms, crew)
+	var arms_mult = 1.0 + GameData.rule("force_armed_bonus") * armed / maxf(1.0, crew)
+	var command = int(leader.skills["command"]) if leader else int(GameData.rule("skill_neutral"))
+	var lead_mult = maxf(0.5, 1.0 + (command - GameData.rule("skill_neutral")) * GameData.rule("skill_odds_step"))
+	var parts = [["%d crew" % crew, float(crew)]]
+	if armed >= 1.0:
+		parts.append(["%d of them armed" % armed, arms_mult])
+	parts.append(["Led by %s (Command %d)" % [leader.name, command] if leader else "No captain (Command %d)" % command, lead_mult])
+	return {"value": crew * arms_mult * lead_mult, "parts": parts}
+
+# A district's defence force against this venture: its garrison and guards, armed, behind its walls,
+# held firmly. A raid slips past part of it (the venture's "defence_weight"). {"value", "parts"}
+func defence_force(d: District, venture_id: String) -> Dictionary:
+	var owner = d.owner_id()
+	var parts = []
+	if owner == "":
+		return {"value": 1.0, "parts": parts}
+	var f: Faction = factions[owner]
+	var guards = defenders_at(owner, d)
+	var men = d.garrison + guards
+	parts.append(["Garrison %d" % roundi(d.garrison), d.garrison])
+	if guards > 0:
+		parts.append(["%d guards posted" % guards, float(guards)])
+	var mult = 1.0
+	var armed = minf(f.arms, men)
+	if armed >= 1.0:
+		var m = 1.0 + GameData.rule("force_armed_bonus") * armed / maxf(1.0, men)
+		parts.append(["%d of them armed" % armed, m])
+		mult *= m
+	var grip = 1.0 / control_defence(d)
+	if grip > 1.001:
+		parts.append(["Control %d" % d.share(owner), grip])
+		mult *= grip
+	if buildings_active(d):
+		for building_id in d.buildings:
+			var effects = GameData.building(building_id)["effects"]
+			if effects.has("defence_mult"):
+				parts.append([GameData.building(building_id)["label"], 1.0 / effects["defence_mult"]])
+				mult *= 1.0 / effects["defence_mult"]
+	for entry in f.effects_with_labels("defence_mult"):
+		parts.append(["Defenders: %s" % entry[0], 1.0 / entry[1]])
+		mult *= 1.0 / entry[1]
+	var weight: float = GameData.venture(venture_id).get("force", {}).get("defence_weight", 1.0)
+	if weight < 0.999:
+		parts.append(["A raid slips past some of them", weight])
+		mult *= weight
+	return {"value": maxf(0.5, men * mult), "parts": parts}
+
+# Success chance from the balance of force: even is 50%, 2 to 1 about 85%, 3 to 1 about 95%
+static func force_odds(ratio: float) -> float:
+	var k = pow(maxf(ratio, 0.01), GameData.rule("force_exponent"))
+	return k / (k + 1.0)
+
+# Garrisons fill from the district's people: a little every day, three times as fast while Safeguard works
+# there; the district's own recruits go to its garrison before they join your manpower
+func _update_garrison(d: District, recruits: float) -> float:
+	var ceiling = garrison_ceiling(d)
+	if d.garrison >= ceiling:
+		d.garrison = ceiling
+		return recruits
+	var regen = ceiling * GameData.rule("garrison_regen")
+	var owner = d.owner_id()
+	for v in ventures:
+		if v.faction_id == owner and v.district == d and v.venture_id == "safeguard":
+			regen *= GameData.rule("garrison_safeguard_mult")
+			break
+	var needed = ceiling - d.garrison
+	var from_recruits = minf(recruits, maxf(0.0, needed - regen))
+	d.garrison = minf(ceiling, d.garrison + regen + from_recruits)
+	return recruits - from_recruits
+
 # Hostile ventures under way against a faction's districts
 func incoming_attacks(faction_id: String) -> Array:
 	return ventures.filter(func(v): return v.target_id == faction_id and GameData.venture(v.venture_id).get("hostile", false))
@@ -851,7 +1424,7 @@ func check_launch(faction_id: String, venture_id: String, district: District, le
 	var f: Faction = factions[faction_id]
 	var def = GameData.venture(venture_id)
 	# Routine work on your own land is a councillor's standing task, not a one-off launch (doc 13)
-	if def.get("task", false) and district.owner_id() == faction_id and not as_task:
+	if is_task(faction_id, venture_id, district) and not as_task:
 		return "Assign a councillor to this as a standing task"
 	var owner = district.owner_id()
 	match def["target"]:
@@ -914,6 +1487,9 @@ func check_launch(faction_id: String, venture_id: String, district: District, le
 		"war_border":
 			if not at_war_with_anyone(faction_id):
 				return "Declare war first (Diplomacy, F4)"
+			# Assault takes land the enemy holds; an enemy's leftover share in your own district is Safeguard's work
+			if owner == faction_id:
+				return "Already yours: assault takes land the enemy holds (Safeguard the Shelter pushes their share out)"
 			if venture_target(faction_id, venture_id, district) == "":
 				return "No faction you're at war with has a real hold here"
 			if not borders_territory(faction_id, district):
@@ -959,13 +1535,21 @@ func check_launch(faction_id: String, venture_id: String, district: District, le
 		if out_now or (not as_task and leader_busy(leader)):
 			return "%s is already out on a venture" % leader.name if out_now else "%s is committed to a task" % leader.name
 	var size = int(def["crew"]) if crew < 0 else crew
-	if size < int(def["crew_range"][0]) or size > int(def["crew_range"][1]):
-		return "Crew must be %d-%d" % [def["crew_range"][0], def["crew_range"][1]]
+	if size < int(def["crew_range"][0]) or size > crew_max(faction_id, venture_id):
+		return "Crew must be %d-%d" % [def["crew_range"][0], crew_max(faction_id, venture_id)]
 	if int(f.manpower) < size:
 		return "Need %d idle manpower (have %d). Manpower grows from the food your districts produce" % [size, f.manpower]
-	var short = f.shortfall(venture_cost(venture_id, funding))
+	# A fight is won by force, not money: wealth helps by buying arms (Economy)
+	if funding > 0 and def.has("force"):
+		return "Fights take no funding: buy arms instead (Economy window)"
+	var cost = venture_cost(venture_id, funding, as_task)
+	var short = f.shortfall(cost)
 	if short != "":
-		return short + (" (or pick less extra funding)" if funding > 0 and f.can_afford(venture_cost(venture_id, 0)) else "")
+		return short + (" (or pick less extra funding)" if funding > 0 and f.can_afford(venture_cost(venture_id, 0, as_task)) else "")
+	# Standing tasks leave a reserve of materials for your own plans (settling, building, one-off ventures)
+	var reserve: float = GameData.rule("task_materials_reserve")
+	if as_task and cost.get("materials", 0.0) > 0.0 and f.materials - cost["materials"] < reserve:
+		return "Keeping %d materials in reserve for your own plans: needs %d to run (have %d)" % [reserve, cost["materials"] + reserve, f.materials]
 	return ""
 
 func launch_venture(faction_id: String, venture_id: String, district: District, leader_id: int = -2, crew: int = -1, funding: int = 0, as_task: bool = false) -> String:
@@ -977,7 +1561,7 @@ func launch_venture(faction_id: String, venture_id: String, district: District, 
 	var leader = best_leader(faction_id, def["skill"]) if leader_id == -2 else character_by_id(leader_id)
 	var size = int(def["crew"]) if crew < 0 else crew
 	var target_id = venture_target(faction_id, venture_id, district)
-	f.pay(venture_cost(venture_id, funding))
+	f.pay(venture_cost(venture_id, funding, as_task))
 	f.manpower -= size
 	var v = ActiveVenture.new(venture_id, faction_id, target_id, district, size, venture_days(venture_id, leader, district))
 	v.leader_id = leader.id
@@ -992,12 +1576,17 @@ func launch_venture(faction_id: String, venture_id: String, district: District, 
 		fail_ambition(faction_id, "you launched a %s" % def["label"].to_lower())
 	ventures.append(v)
 	_feed_trait(f, venture_id, 2.0)
+	# Attacking someone who promised to leave you alone (you paid them, or they backed down) frees them of it
+	if def.get("hostile", false) and target_id != "" and relation(faction_id, target_id).spare_until[target_id] > day:
+		relation(faction_id, target_id).spare_until[target_id] = 0
+		event.emit("The %s attacked the %s, so the %s's promise not to raid them is void." % [
+			faction_name(faction_id), faction_name(target_id), faction_name(target_id)], "bad" if player_id in [faction_id, target_id] else "info")
 	# Raiding or stirring up a trade partner ends the deal
 	if def.get("hostile", false) and target_id != "" and relation(faction_id, target_id).trade:
 		relation(faction_id, target_id).trade = false
 		change_opinion(target_id, faction_id, -15.0, "betrayed_trade")
 		event.emit("The trade agreement between the %s and the %s collapsed over the %s." % [
-			faction_name(faction_id), faction_name(target_id), def["label"].to_lower()], "alert" if target_id == player_id or faction_id == player_id else "info")
+			faction_name(faction_id), faction_name(target_id), def["label"].to_lower()], "bad" if target_id == player_id or faction_id == player_id else "info")
 
 	# A task's runs are summed up in its digest, not announced one by one
 	if as_task:
@@ -1013,6 +1602,14 @@ func launch_venture(faction_id: String, venture_id: String, district: District, 
 		]
 		event.emit(text, "alert" if hostile and target_id == player_id else "info")
 	return ""
+
+# A crew-loss effect scaled by how badly a fight went (other effects unchanged)
+func _scaled_loss(e: Dictionary, severity: float) -> Dictionary:
+	if e["op"] != "crew_share_loss":
+		return e
+	var scaled = e.duplicate()
+	scaled["share"] = e["share"] * severity
+	return scaled
 
 const TIER_LABELS = {"triumph": "TRIUMPH", "success": "success", "setback": "setback", "disaster": "DISASTER"}
 
@@ -1057,6 +1654,10 @@ func _resolve(v: ActiveVenture):
 		effects.append_array(def.get("triumph_effects", []))
 	elif tier == "disaster":
 		effects.append_array(def.get("disaster_effects", []))
+		# In a fight, how badly a disaster goes depends on how badly you were outnumbered
+		if not chances["force"].is_empty():
+			var severity = clampf(GameData.rule("force_no_disaster_ratio") - chances["force"]["ratio"], 0.3, 1.0)
+			effects = effects.map(func(e): return _scaled_loss(e, severity))
 	# What the district was worth before the raid wrecked any of it
 	var worth = raid_worth(d)
 	var result = VentureSystem.apply_effects(effects, f, v.target_id, d, self, v.crew, outcome["quality"])
@@ -1067,6 +1668,26 @@ func _resolve(v: ActiveVenture):
 		result["notes"].push_front("a clean job (x%.1f)" % outcome["quality"])
 	elif success and outcome["quality"] <= 0.9:
 		result["notes"].push_front("only just (x%.1f)" % outcome["quality"])
+	# A fight leaves its mark: a close win still costs lives, and the garrison is knocked down win or lose
+	if not chances["force"].is_empty():
+		var ratio: float = chances["force"]["ratio"]
+		f.arms = maxf(0.0, f.arms - arms_used(f.id, v.venture_id, v.crew))
+		# In a war over a goal, every fight moves the war score
+		var war_r = relation(f.id, v.target_id) if v.target_id != "" else null
+		if war_r and war_r.at_war and war_r.claim.get("stage", "") == "war":
+			var points = (GameData.rule("war_points_assault") if v.venture_id == "assault" else GameData.rule("war_points_raid")) if success \
+				else (-GameData.rule("war_points_assault_lost") if v.venture_id == "assault" else 0.0)
+			war_r.war_points += points if war_r.claim["by"] == f.id else -points
+		if success:
+			var close = clampf((2.0 - ratio) * GameData.rule("force_close_win_loss"), 0.0, 0.15)
+			var fallen = mini(int(round(v.crew * close * rng.randf_range(0.5, 1.0))), v.crew - result["lost"])
+			if fallen > 0:
+				result["lost"] += fallen
+				result["notes"].append("a close fight: %d fell" % fallen)
+		d.garrison *= 1.0 - GameData.rule("garrison_knock_success" if success else "garrison_knock_failure")
+		# Taken: the new owner's garrison starts from nothing
+		if d.owner_id() != owner_before:
+			d.garrison = 0.0
 	# Attackers who fail against a guarded district are driven off with extra losses
 	if def.get("hostile", false) and not success and v.target_id != "" and defenders_at(v.target_id, d) >= 2:
 		var driven_off = mini(rng.randi_range(1, 3), v.crew - result["lost"])
@@ -1076,7 +1697,15 @@ func _resolve(v: ActiveVenture):
 	if def.has("raid_cooldown"):
 		d.raid_safe_until = maxi(d.raid_safe_until, day + int(def["raid_cooldown"][tier]))
 		if v.target_id != "":
-			relation(f.id, v.target_id).last_raid[f.id] = day
+			var raided = relation(f.id, v.target_id)
+			raided.last_raid[f.id] = day
+			# Raiding someone who's pressing a claim on you hardens their cause: their ultimatum comes sooner
+			if raided.claim.get("stage", "") == "justifying" and raided.claim["by"] == v.target_id:
+				var sooner = mini(int(GameData.rule("claim_raid_cut_days")), int(raided.claim["ready_day"]) - day)
+				raided.claim["ready_day"] = int(raided.claim["ready_day"]) - sooner
+				if v.target_id == player_id and sooner > 0:
+					event.emit("The %s raided you: your claim on them is justified %d days sooner (ultimatum in %d days)." % [
+						f.display_name, sooner, int(raided.claim["ready_day"]) - day], "good")
 		if not success and defenders_at(v.target_id, d) >= 2:
 			result["notes"].append("the %s lick their wounds" % f.display_name)
 		result["notes"].append("no raids on %s for %d days" % [d.district_name, d.raid_safe_until - day])
@@ -1114,7 +1743,7 @@ func _resolve(v: ActiveVenture):
 		text += ". " + fate
 	var kind = "info"
 	if f.id == player_id:
-		kind = "good" if success else ("alert" if fate.contains("killed") else "bad")
+		kind = "good" if success else "bad"
 	elif v.target_id == player_id and def.get("hostile", false):
 		kind = "bad" if success else "good"
 	# A task's ordinary successes go into its monthly digest; triumphs, failures, wounds and deaths still show
@@ -1459,6 +2088,299 @@ func _crown(c: Character):
 	c.rule_start = {"districts_conquered": f.stats["districts_conquered"], "buildings_built": f.stats.get("buildings_built", 0)}
 	f.designated_heir = -1
 
+# --- Matches within the faction (doc 16, H1) -------------------------------------------------
+
+# The best match among the faction's own captains for a grown family member: unmarried, the other sex,
+# of a fitting age, not family; councillors first, then the most able (null if nobody fits)
+func match_candidate(c: Character) -> Character:
+	var best: Character = null
+	var best_score = -1.0
+	for other in characters_of(c.faction_id):
+		if other == c or other.family or other.spouse_id >= 0 or other.sex == c.sex or absi(other.age - c.age) > 12:
+			continue
+		var score = other.best_skill_value() + (5.0 if other.post != "" else 0.0)
+		if score > best_score:
+			best_score = score
+			best = other
+	return best
+
+# The best match from one of the faction's houses: unmarried, the other sex, of a fitting age (null if none)
+func house_match_candidate(c: Character) -> Character:
+	var best: Character = null
+	for other in characters:
+		if other.faction_id != c.faction_id or other.house_id < 0 or other == c or other.spouse_id >= 0 or other.sex == c.sex \
+				or not other.is_adult() or absi(other.age - c.age) > 12:
+			continue
+		if best == null or other.best_skill_value() > best.best_skill_value():
+			best = other
+	return best
+
+# A match is made: the spouse joins the family, and their children are family
+func _wed(c: Character, kind: String, candidate: Character):
+	var spouse: Character = null
+	match kind:
+		"captain":
+			spouse = candidate
+			spouse.family = true
+			spouse.change_loyalty(GameData.rule("married_in_loyalty"), "married_in")
+		"house":
+			# One of a house marries into the family: the house is bound to you
+			spouse = candidate
+			var head = house_head(spouse.house_id)
+			if head:
+				head.change_loyalty(20.0, "house_match")
+			spouse.house_id = -1
+			spouse.family = true
+		"people":
+			# One of your people: the children lean Of the People
+			spouse = _marry(c)
+			spouse.dynasty = c.dynasty
+			if "of_the_people" not in spouse.traits and "born_to_rule" not in spouse.traits:
+				spouse.traits.append("of_the_people")
+			return
+	if spouse:
+		spouse.spouse_id = c.id
+		c.spouse_id = spouse.id
+
+# Living family members of a faction (the cap keeps a family from swelling without end)
+func family_size(faction_id: String) -> int:
+	return everyone_of(faction_id).filter(func(c): return c.family or c.is_leader).size()
+
+# --- Houses (doc 16, H2) -------------------------------------------------------------------
+# A house is a family inside a faction, not the ruling one, holding land of its own: the faction's still
+# on the map, but the house keeps a share of its districts' income. Its loyalty is its head's; a disloyal
+# house warns, then may break away with its land. Houses come from Vassalize (the absorbed ruling family)
+# and from land granted to a grown family member or a loyal captain (a cadet house).
+
+func house(house_id: int) -> Dictionary:
+	for h in houses:
+		if int(h["id"]) == house_id:
+			return h
+	return {}
+
+func houses_of(faction_id: String) -> Array:
+	return houses.filter(func(h): return h["faction"] == faction_id)
+
+func house_members(house_id: int) -> Array:
+	return characters.filter(func(c): return c.house_id == house_id)
+
+func house_districts(house_id: int) -> Array:
+	var h = house(house_id)
+	return districts.filter(func(d): return d.house_id == house_id and d.owner_id() == h.get("faction", ""))
+
+# The eldest grown member speaks for the house
+func house_head(house_id: int) -> Character:
+	var head: Character = null
+	for c in house_members(house_id):
+		if c.is_adult() and (head == null or c.age > head.age):
+			head = c
+	return head
+
+func house_loyalty(house_id: int) -> float:
+	var head = house_head(house_id)
+	return head.loyalty() if head else 0.0
+
+func is_house_head(c: Character) -> bool:
+	return c.house_id >= 0 and house_head(c.house_id) == c
+
+# Founds a house in a faction with these people and districts; returns its id
+func _found_house(faction_id: String, name: String, members: Array, lands: Array) -> int:
+	var id = next_house_id
+	next_house_id += 1
+	houses.append({"id": id, "name": name, "faction": faction_id, "founded": day, "restless_since": -1, "asked_war": -1})
+	for c in members:
+		c.house_id = id
+	for d in lands:
+		d.house_id = id
+	return id
+
+# "" if this person can be granted this district to found a house, otherwise why not
+func check_grant(faction_id: String, c: Character, d: District) -> String:
+	if c == null or c.faction_id != faction_id or c.death_day >= 0:
+		return "No such person"
+	if not c.is_adult():
+		return "%s is too young to hold land" % c.name
+	if c.is_leader:
+		return "The leader holds everything already"
+	if c.house_id >= 0:
+		return "%s already has a house" % c.name
+	if not c.family and c.loyalty() < GameData.rule("house_grant_min_loyalty"):
+		return "%s isn't loyal enough to trust with land (loyalty %d, needs %d)" % [c.name, c.loyalty(), GameData.rule("house_grant_min_loyalty")]
+	if d == null or d.owner_id() != faction_id:
+		return "Select one of your districts first"
+	if d.id == factions[faction_id].home_id:
+		return "Not your home district"
+	if d.house_id >= 0:
+		return "%s is already held by House %s" % [d.district_name, house(d.house_id).get("name", "?")]
+	# Keep land of your own: at least one district no house holds
+	var own = districts.filter(func(x): return x.owner_id() == faction_id and x.house_id < 0).size()
+	if own <= 1:
+		return "Keep at least one district for yourself"
+	return ""
+
+# A cadet house: the grantee, their spouse and children hold the district and keep a share of its income
+func grant_land(faction_id: String, c: Character, d: District) -> String:
+	var err = check_grant(faction_id, c, d)
+	if err != "":
+		return err
+	var surname = c.dynasty if c.dynasty != "" else c.name.get_slice(" ", 1)
+	var members = [c]
+	var spouse = character_by_id(c.spouse_id)
+	if spouse and spouse.house_id < 0:
+		members.append(spouse)
+	for kid in characters:
+		if c.id in kid.parent_ids and kid.house_id < 0:
+			members.append(kid)
+	var id = _found_house(faction_id, "%s of %s" % [surname, d.district_name], members, [d])
+	c.change_loyalty(15.0, "granted_land")
+	if faction_id == player_id:
+		event.emit("%s is granted %s and founds House %s. They keep %d%% of its income; their loyalty is the house's." % [
+			c.name, d.district_name, house(id)["name"], GameData.rule("house_income_share") * 100], "good")
+	else:
+		event.emit("The %s granted %s to %s, who founds House %s." % [faction_name(faction_id), d.district_name, c.name, house(id)["name"]], "info")
+	return ""
+
+# The share of a district's income its owner gets (a house keeps the rest)
+func house_keep(d: District) -> float:
+	return 1.0 - GameData.rule("house_income_share") if d.house_id >= 0 else 1.0
+
+# At war, the faction asks a house to fight: it may decline (likelier the less loyal it is); if it agrees, it
+# sends fighters from its districts' garrisons into your manpower, and earns your gratitude
+func check_call_house(faction_id: String, house_id: int) -> String:
+	var h = house(house_id)
+	if h.is_empty() or h["faction"] != faction_id:
+		return "No such house"
+	if not at_war_with_anyone(faction_id):
+		return "You're not at war"
+	if int(h["asked_war"]) >= 0 and day - int(h["asked_war"]) < 180:
+		return "Asked already (again in %d days)" % (180 - (day - int(h["asked_war"])))
+	return ""
+
+func call_house(faction_id: String, house_id: int) -> String:
+	var err = check_call_house(faction_id, house_id)
+	if err != "":
+		return err
+	var h = house(house_id)
+	h["asked_war"] = day
+	var chance = clampf(house_loyalty(house_id) / 100.0 + 0.2, 0.1, 0.95)
+	if rng.randf() >= chance:
+		event.emit("House %s declined to fight for the %s." % [h["name"], faction_name(faction_id)], "bad" if faction_id == player_id else "info")
+		return ""
+	var levy = 0.0
+	for d in house_districts(house_id):
+		var sent = d.garrison * GameData.rule("house_levy_share")
+		d.garrison -= sent
+		levy += sent
+	factions[faction_id].manpower += roundf(levy)
+	var head = house_head(house_id)
+	if head:
+		head.change_loyalty(5.0, "fought_with_you")
+	event.emit("House %s answers the call: %d fighters join the %s." % [h["name"], roundi(levy), faction_name(faction_id)], "good" if faction_id == player_id else "info")
+	return ""
+
+# Monthly: houses with no land or people fade; a disloyal house warns, then may break away with its land
+func _update_houses():
+	for h in houses.duplicate():
+		var id = int(h["id"])
+		if not factions.has(h["faction"]) or house_head(id) == null or house_districts(id).is_empty():
+			for d in districts:
+				if d.house_id == id:
+					d.house_id = -1
+			for c in characters:
+				if c.house_id == id:
+					c.house_id = -1
+			houses.erase(h)
+			continue
+		var loyalty = house_loyalty(id)
+		if loyalty >= GameData.rule("loyalty_defect") + 5.0:
+			h["restless_since"] = -1
+			continue
+		if loyalty >= GameData.rule("loyalty_defect"):
+			continue
+		if int(h["restless_since"]) < 0:
+			h["restless_since"] = day
+			if h["faction"] == player_id:
+				event.emit("House %s is restless (loyalty %d): if it stays below %d it may break away with %s. Win them back: a match with your family, a seat, their land kept safe." % [
+					h["name"], loyalty, GameData.rule("loyalty_defect"), ", ".join(house_districts(id).map(func(d): return d.district_name))], "alert")
+		elif day - int(h["restless_since"]) >= int(GameData.rule("house_restless_days")) and rng.randf() < GameData.rule("house_revolt_chance"):
+			_house_revolt(h)
+
+# A house breaks away with its districts and people, at war with its old faction (the civil-war split)
+func _house_revolt(h: Dictionary):
+	var faction_id: String = h["faction"]
+	var id = int(h["id"])
+	var head = house_head(id)
+	var lands = house_districts(id)
+	if head == null or lands.is_empty() or districts_held(faction_id) - lands.size() < 1:
+		return
+	var members = house_members(id)
+	houses.erase(h)
+	for d in lands:
+		d.house_id = -1
+	for c in members:
+		c.house_id = -1
+	_split(faction_id, head, lands, members, "House %s broke away from" % h["name"])
+
+# A house's land is lost in a war: it blames you
+func _house_lost_land(d: District):
+	if d.house_id < 0:
+		return
+	var head = house_head(d.house_id)
+	if head:
+		head.change_loyalty(-10.0, "lost_land")
+	d.house_id = -1
+
+# --- Marriage between factions (doc 16, H3) ----------------------------------------------------
+
+# The faction's best unmarried grown family member to offer in a match (not the leader; null if none)
+func match_offer(faction_id: String) -> Character:
+	var best: Character = null
+	for c in characters_of(faction_id):
+		if c.family and character_by_id(c.spouse_id) == null and c.age <= 45 and (best == null or c.best_skill_value() > best.best_skill_value()):
+			best = c
+	return best
+
+# Someone of theirs (family or a house) to match with `mine`: unmarried, the other sex, of a fitting age
+func match_partner(mine: Character, faction_id: String) -> Character:
+	var best: Character = null
+	for c in characters_of(faction_id):
+		if (c.family or c.house_id >= 0) and character_by_id(c.spouse_id) == null and c.sex != mine.sex and absi(c.age - mine.age) <= 12 \
+				and (best == null or c.best_skill_value() > best.best_skill_value()):
+			best = c
+	return best
+
+# Whether a living marriage binds the two factions' families
+func marriage_tie(a_id: String, b_id: String) -> bool:
+	for pair in relation(a_id, b_id).marriages:
+		var x = character_by_id(int(pair[0]))
+		var y = character_by_id(int(pair[1]))
+		if x and y and x.spouse_id == y.id:
+			return true
+	return false
+
+# The match is made: theirs joins the proposer's family, and the factions are bound while both live
+func cross_match(proposer_id: String, other_id: String) -> String:
+	var mine = match_offer(proposer_id)
+	if mine == null:
+		return ""
+	var theirs = match_partner(mine, other_id)
+	if theirs == null:
+		return ""
+	theirs.faction_id = proposer_id
+	theirs.post = ""
+	theirs.house_id = -1
+	theirs.family = true
+	theirs.spouse_id = mine.id
+	mine.spouse_id = theirs.id
+	relation(proposer_id, other_id).marriages.append([mine.id, theirs.id])
+	for side in [proposer_id, other_id]:
+		var r = relation(proposer_id, other_id)
+		r.baseline[side] = Diplomacy.baseline_value(Diplomacy.opinion_baseline(self, side, r.other(side)))
+		r.recompute_opinion(side)
+	var text = "%s of the %s marries %s of the %s: the two families are bound." % [theirs.name, faction_name(other_id), mine.name, faction_name(proposer_id)]
+	event.emit(text, "good" if player_id in [proposer_id, other_id] else "info")
+	return ""
+
 # A spouse for someone in the ruling family, from the faction's own people
 func _marry(c: Character) -> Character:
 	var spouse = _new_person(c.faction_id, c.dynasty, clampi(c.age + rng.randi_range(-6, 4), 18, 70), "f" if c.sex == "m" else "m")
@@ -1486,17 +2408,92 @@ func _found_dynasty(faction_id: String):
 	for k in children:
 		var child = _new_child(leader, clampi(rng.randi_range(0, leader.age - 18), 0, 22))
 		if child.is_adult():
+			# Grown before the story starts: their nature stuck
+			child.traits = child.leanings.keys()
 			_grow_up(child)
+		elif child.age >= int(GameData.rule("schooling_age")):
+			# Children already at school age when the story starts were raised at home
+			child.upbringing = "parents"
+			for y in child.age - int(GameData.rule("schooling_age")):
+				_grow_year(child)
 
 func _new_child(parent: Character, age: int) -> Character:
 	var child = _new_person(parent.faction_id, parent.dynasty, age, "m" if rng.randf() < 0.5 else "f")
-	child.family = true
+	# Born to the ruling family, or into a house (doc 16): a house's children are its own
+	child.house_id = parent.house_id
+	child.family = parent.family or parent.is_leader or parent.house_id < 0
 	child.parent_ids = [parent.id]
 	if parent.spouse_id >= 0:
 		child.parent_ids.append(parent.spouse_id)
 	for s in Character.SKILLS:
 		child.skills[s] = 0
+	# The nature they're born with is only a leaning: how they're raised decides whether it sticks (settled at 16)
+	for t in child.traits:
+		child.leanings[t] = GameData.rule("nature_at_birth")
+	child.traits.clear()
 	return child
+
+# A year of childhood under their upbringing: skills rise (most of all the ones being taught), and so do leanings
+func _grow_year(c: Character):
+	var def = GameData.council()["upbringings"].get(c.upbringing, GameData.council()["upbringings"]["parents"])
+	var parents = c.parent_ids.map(func(id): return person_by_id(id)).filter(func(p): return p != null)
+	var focus = {}
+	for key in def["skills"]:
+		var taught = []
+		match key:
+			"$tutor":
+				taught = [c.tutor_skill] if c.tutor_skill != "" else []
+			"$parents":
+				taught = parents.map(func(p): return p.best_skill())
+			_:
+				taught = [key]
+		for s in taught:
+			focus[s] = focus.get(s, 0.0) + float(def["skills"][key])
+	for s in Character.SKILLS:
+		if rng.randf() < GameData.rule("childhood_skill_chance") + focus.get(s, 0.0):
+			c.skills[s] = mini(10, int(c.skills[s]) + 1)
+	for key in def["leanings"]:
+		var amount: float = def["leanings"][key]
+		var natures = []
+		match key:
+			"$tutor_nature":
+				var tutor = person_by_id(c.tutor_id)
+				natures = tutor.traits if tutor else []
+			"$parents_nature":
+				for p in parents:
+					natures += p.traits
+			_:
+				natures = [key]
+		for t in natures:
+			if GameData.character_trait(t)["kind"] in ["personality", "upbringing"]:
+				c.leanings[t] = float(c.leanings.get(t, 0.0)) + amount * rng.randf_range(0.5, 1.5)
+
+# Chance a leaning settles into a trait at 16
+func settle_chance(c: Character, trait_id: String) -> float:
+	return minf(GameData.rule("leaning_settle_max"), float(c.leanings.get(trait_id, 0.0)) * GameData.rule("leaning_settle_per_point"))
+
+# Coming of age: the strongest leanings may settle into traits (an upbringing biases this, never guarantees it)
+func _settle_traits(c: Character) -> Array:
+	var order = c.leanings.keys()
+	order.sort_custom(func(a, b): return c.leanings[a] > c.leanings[b])
+	var settled = []
+	for t in order:
+		if settled.size() >= 3 or t in c.traits or _has_opposite(c, t):
+			continue
+		if rng.randf() < settle_chance(c, t):
+			c.traits.append(t)
+			settled.append(t)
+	for s in Character.SKILLS:
+		c.skills[s] = maxi(1, int(c.skills[s]))
+	return settled
+
+# "Tutored by Karel Marsh (Command)", for the child's card
+func upbringing_label(c: Character) -> String:
+	if c.upbringing == "":
+		return ""
+	var tutor = person_by_id(c.tutor_id)
+	var label: String = GameData.council()["upbringings"][c.upbringing]["label"]
+	return label.replace("{tutor}", "%s (%s)" % [tutor.name, c.tutor_skill.capitalize()] if tutor else "a tutor").replace("{skill}", c.tutor_skill.capitalize())
 
 # Coming of age: some of each parent's strength, and a little of their nature
 func _grow_up(c: Character):
@@ -1525,16 +2522,39 @@ func yearly_death_chance(c: Character) -> float:
 # Births, deaths, birthdays and respect for the leader
 func _life_cycle():
 	if day % 360 == 0:
-		for c in characters:
+		var schooling = int(GameData.rule("schooling_age"))
+		for c in characters.duplicate():
 			c.age += 1
-			if c.family and c.age == 16:
-				_grow_up(c)
-				_fire_moment(c.faction_id, "coming_of_age", c)
-				if c.faction_id == player_id:
-					var best = c.best_skill()
-					event.emit("%s comes of age and joins your crew (%s %d)." % [c.name, best.capitalize(), c.skills[best]], "good")
+			# A grown, unmarried family member (or a widow) is matched: from 18, then every couple of years if "not yet"
+			if c.family and not c.is_leader and c.age >= int(GameData.rule("match_age")) and c.age <= 45 and character_by_id(c.spouse_id) == null \
+					and day >= c.match_day:
+				c.match_day = day + int(GameData.rule("match_again_years")) * 360 - 1
+				_fire_moment(c.faction_id, "match", c)
+			if not c.family or c.age < schooling or c.age > 16:
+				continue
+			# At six, who raises them; then a year of growing up each birthday, and now and then an event
+			if c.upbringing == "":
+				if c.age == schooling:
+					_fire_moment(c.faction_id, "education", c)
+				if c.upbringing == "" and (c.age > schooling or not (c.faction_id == player_id and factions[c.faction_id].ai == null)):
+					c.upbringing = "parents"
+			# Growing up starts the year after the choice (the player's may still be waiting for an answer)
+			if c.age == schooling or c.upbringing == "":
+				continue
+			_grow_year(c)
+			if c.age < 16:
+				if rng.randf() < GameData.rule("childhood_event_chance"):
+					_fire_moment(c.faction_id, "childhood", c)
+				continue
+			var settled = _settle_traits(c)
+			_fire_moment(c.faction_id, "coming_of_age", c)
+			if c.faction_id == player_id:
+				var best = c.best_skill()
+				var became = ", ".join(settled.map(func(t): return GameData.character_trait(t)["label"]))
+				event.emit("%s comes of age and joins your crew (%s %d)%s." % [c.name, best.capitalize(), c.skills[best], (": " + became) if became != "" else ""], "good")
 	if day % 30 != 20:
 		return
+	_update_houses()
 	for c in characters.duplicate():
 		if not characters.has(c):
 			continue
@@ -1565,6 +2585,9 @@ func _life_cycle():
 		if mother.age >= 45 or father.age >= 60:
 			continue
 		var kids = everyone_of(mother.faction_id).filter(func(c): return mother.id in c.parent_ids or (father.id in c.parent_ids and mother.id in c.parent_ids))
+		# The family has a limit, so it branches without swelling for ever (doc 16)
+		if family_size(mother.faction_id) >= int(GameData.rule("family_cap")):
+			continue
 		if kids.size() < int(GameData.rule("children_per_couple")) and rng.randf() < GameData.rule("birth_chance"):
 			mother.due_day = day + int(GameData.rule("pregnancy_days"))
 			if mother.faction_id == player_id:
@@ -1716,14 +2739,19 @@ func succession_outlook(faction_id: String, leader: Character = null, honour_cho
 		return {"heir": null, "claim": 0.0, "by_blood": false, "contesters": [], "split_chance": 0.0}
 	var claim = (GameData.rule("blood_claim") if by_blood else GameData.rule("council_claim")) + heir.best_skill_value() * 3.0 \
 		+ heir.triumphs * 2.0 + factions[faction_id].reputation / 10.0 + factions[faction_id].effect("heir_claim")
+	for t in heir.traits:
+		claim += float(GameData.character_trait(t).get("claim", 0.0))
 	var contesters = []
 	for c in crew:
-		if c == heir or not (c.post != "" or c.family):
+		# Councillors, the family, and the heads of houses (their land is their claim) may contest it
+		if c == heir or not (c.post != "" or c.family or is_house_head(c)):
 			continue
 		var loyalty = c.loyalty()
 		if loyalty >= gov.get("contest_loyalty", 40.0) and not c.has_trait("ambitious"):
 			continue
 		var theirs = c.best_skill_value() * 3.0 + c.triumphs * 2.0 + maxf(45.0 - loyalty, 0.0) + (10.0 if c.has_trait("ambitious") else 0.0)
+		if is_house_head(c):
+			theirs += 5.0 * house_districts(c.house_id).size()
 		if theirs > claim * 0.6:
 			contesters.append([c, theirs])
 	contesters.sort_custom(func(a, b): return a[1] > b[1])
@@ -1731,6 +2759,9 @@ func succession_outlook(faction_id: String, leader: Character = null, honour_cho
 	for entry in contesters:
 		chance += entry[1] / (entry[1] + claim) * GameData.rule("split_weight")
 	chance *= factions[faction_id].effect("split_chance_mult")
+	# An heir the people trust is harder to contest
+	for t in heir.traits:
+		chance *= float(GameData.character_trait(t).get("split_mult", 1.0))
 	if districts_held(faction_id) < 2:
 		chance = 0.0
 	return {"heir": heir, "claim": claim, "by_blood": by_blood, "contesters": contesters, "split_chance": clampf(chance, 0.0, 0.85)}
@@ -1821,22 +2852,31 @@ func _purge(faction_id: String, rival: Character):
 
 # Civil war: a rival claimant breaks away with a block of districts furthest from the capital
 var next_split_id: int = 1
+# Houses inside factions (doc 16, H2): [{"id", "name", "faction", "founded", "restless_since", "asked_war"}]
+var houses: Array = []
+var next_house_id: int = 1
 
-func _split(faction_id: String, claimant: Character):
+# A faction splits: a claimant breaks away with part of its land, at war with it. A house revolt (doc 16)
+# passes its own districts (`lands`) and people (`house`), and `why` for the news
+func _split(faction_id: String, claimant: Character, lands: Array = [], house: Array = [], why: String = ""):
 	var f: Faction = factions[faction_id]
 	var owned = districts.filter(func(d): return d.owner_id() == faction_id)
 	if owned.size() < 2:
 		return
-	var capital: District = districts[f.home_id] if f.home_id >= 0 and districts[f.home_id].owner_id() == faction_id else owned[0]
 	var seed: District = owned[0]
-	for d in owned:
-		if d != capital and d.center.distance_to(capital.center) > seed.center.distance_to(capital.center):
-			seed = d
-	var others = owned.filter(func(d): return d != capital)
-	others.sort_custom(func(a, b): return a.center.distance_to(seed.center) < b.center.distance_to(seed.center))
-	# How much a breakaway takes depends on the government: an autocracy breaks rarely but badly
-	var portion: Array = GameData.government(f.government).get("split_share", [0.3, 0.45])
-	var take = others.slice(0, clampi(int(round(owned.size() * rng.randf_range(portion[0], portion[1]))), 1, owned.size() - 1))
+	var take = lands
+	if take.is_empty():
+		var capital: District = districts[f.home_id] if f.home_id >= 0 and districts[f.home_id].owner_id() == faction_id else owned[0]
+		for d in owned:
+			if d != capital and d.center.distance_to(capital.center) > seed.center.distance_to(capital.center):
+				seed = d
+		var others = owned.filter(func(d): return d != capital)
+		others.sort_custom(func(a, b): return a.center.distance_to(seed.center) < b.center.distance_to(seed.center))
+		# How much a breakaway takes depends on the government: an autocracy breaks rarely but badly
+		var portion: Array = GameData.government(f.government).get("split_share", [0.3, 0.45])
+		take = others.slice(0, clampi(int(round(owned.size() * rng.randf_range(portion[0], portion[1]))), 1, owned.size() - 1))
+	else:
+		seed = take[0]
 	var surname = claimant.name.get_slice(" ", 1)
 	var id = "split_%d" % next_split_id
 	next_split_id += 1
@@ -1871,6 +2911,13 @@ func _split(faction_id: String, claimant: Character):
 			c.faction_id = id
 			c.post = ""
 			c.loyalty_mods.clear()
+	# A house that breaks away takes all its people: they're the new faction's ruling family
+	for c in house:
+		if c != claimant and c.faction_id == faction_id and c.death_day < 0:
+			c.faction_id = id
+			c.post = ""
+			c.family = true
+			c.loyalty_mods.clear()
 	while captain_count(id) < 2:
 		_new_captain(id, Character.SKILLS[rng.randi() % Character.SKILLS.size()])
 	for other in factions:
@@ -1882,6 +2929,14 @@ func _split(faction_id: String, claimant: Character):
 			r.recompute_opinion(side)
 	start_war(id, faction_id)
 	var names = ", ".join(take.map(func(d): return d.district_name))
+	if why != "":
+		rebels.blurb = "%s the %s, led by %s." % [why, f.display_name, claimant.name]
+		event.emit("%s the %s with %s, as the %s. They are at war with the %s." % [why, f.display_name, names, rebels.display_name, f.display_name],
+			"alert" if faction_id == player_id or shares_border(player_id, id) else "info")
+		if faction_id == player_id:
+			major_event.emit("A house breaks away", "%s you with %s, as the %s, and is at war with you." % [why, names, rebels.display_name], id)
+		factions_changed.emit()
+		return
 	if faction_id == player_id:
 		event.emit("CIVIL WAR! %s refused to accept the new leader and broke away with %s, as the %s." % [claimant.name, names, rebels.display_name], "alert")
 	else:
@@ -1975,8 +3030,15 @@ func _announce_ownership_change(d: District, owner_before: String, actor_id: Str
 	var owner_after = d.owner_id()
 	if owner_after == owner_before:
 		return
+	# A house that held it has lost its land, and blames its faction (doc 16)
+	_house_lost_land(d)
 	if owner_before != "" and actor_id != "" and is_at_war(owner_before, actor_id):
 		add_exhaustion(owner_before, actor_id, 10.0)
+		# Land taken in a war over a goal counts toward it (the claimed district double)
+		var r = relation(owner_before, actor_id)
+		if r.claim.get("stage", "") == "war":
+			var points: float = GameData.rule("war_points_district") * (2.0 if int(r.claim.get("district", -1)) == d.id else 1.0)
+			r.war_points += points if r.claim["by"] == actor_id else -points
 	var spoils = ""
 	if owner_after != "" and not d.buildings.is_empty():
 		spoils = " Its %s changed hands too." % ", ".join(d.building_labels())
@@ -2001,7 +3063,7 @@ func _announce_trait(f: Faction, trait_name: String):
 	if f.id == player_id:
 		event.emit("Your crew is now known as %s. Benefit: %s. Cost: %s." % [trait_name, t.benefit, t.cost], "good")
 	else:
-		event.emit("%s have become %s (%s)." % [f.display_name, trait_name, t.benefit], "alert")
+		event.emit("%s have become %s (%s)." % [f.display_name, trait_name, t.benefit], "good")
 
 # --- Buildings ------------------------------------------------------------------
 
@@ -2009,6 +3071,20 @@ func _announce_trait(f: Faction, trait_name: String):
 func buildings_active(district: District) -> bool:
 	var owner: Faction = factions.get(district.owner_id())
 	return owner != null and not owner.broke and not owner.disrepair
+
+# Where a district's building slots come from, as [[label, slots], ...] (for the Build tab's hover)
+func building_slot_parts(district: District) -> Array:
+	var parts = []
+	if district.owner_id() == "":
+		return parts
+	var status: String = district.get_control_status()
+	parts.append([status.capitalize(), int(GameData.rule("building_slots").get(status, 0))])
+	if district_payoffs(district)["rebuilt"]:
+		parts.append(["Rebuilt (development 100%)", int(GameData.rule("payoff_rebuilt_slots"))])
+	if status == "secured" and factions.has(district.owner_id()):
+		for entry in factions[district.owner_id()].effects_with_labels("secured_slots"):
+			parts.append([entry[0], int(entry[1])])
+	return parts
 
 func building_slots(district: District) -> int:
 	if district.owner_id() == "":
@@ -2305,6 +3381,8 @@ func advance_day():
 	_update_ambitions()
 	_check_restored()
 	_update_events()
+	_ease_prices()
+	_update_claims()
 	_update_tasks()
 	_check_recruitment()
 	for fid in factions:
@@ -2365,17 +3443,22 @@ func _simulate_district(d: District):
 	# Only the owner is paid, and secured land pays more
 	if owner_faction:
 		var income = district_income(d)
-		# Vassals send part of their income to their overlord
+		# Tributaries send part of their income to their suzerain: food, materials and wealth (doc 15)
 		var overlord: Faction = factions.get(overlord_of(owner))
 		var rate: float = GameData.rule("tribute_rate") if overlord else 0.0
-		owner_faction.materials += income["materials"]
-		for resource_type in ["supplies", "wealth"]:
-			owner_faction.set(resource_type, owner_faction.get(resource_type) + income[resource_type] * (1.0 - rate))
+		# A house holding the district keeps its share first (doc 16)
+		var keep = house_keep(d)
+		for resource_type in ["supplies", "materials", "wealth"]:
+			owner_faction.set(resource_type, owner_faction.get(resource_type) + income[resource_type] * keep * (1.0 - rate))
 			if overlord:
-				overlord.set(resource_type, overlord.get(resource_type) + income[resource_type] * rate)
-		# Recruits come from calm land, up to what your territory can support
+				overlord.set(resource_type, overlord.get(resource_type) + income[resource_type] * keep * rate)
+		# Recruits come from calm land: first to the district's own garrison, then to your manpower, up to what
+		# your territory can support
+		var recruits = _update_garrison(d, income["recruits"])
 		if owner_faction.manpower + crew_away(owner) < crew_cap(owner):
-			owner_faction.manpower += income["recruits"]
+			owner_faction.manpower += recruits
+	else:
+		d.garrison = 0.0
 
 	_check_unrest(d, owner)
 
@@ -2454,7 +3537,7 @@ func to_save() -> Dictionary:
 		"rng_seed": str(rng.seed), "rng_state": str(rng.state),
 		"factions": [], "relations": [], "districts": [], "ventures": [], "constructions": [], "missions": [],
 		"tasks": tasks.map(func(t): return t.to_dict()), "pending_events": pending_events.duplicate(true), "proposals": proposals.duplicate(true), "demand_warned": demand_warned.duplicate(), "player_defeated": player_defeated,
-		"characters": characters.map(func(c): return c.to_dict()), "next_character_id": next_character_id, "departed": departed.duplicate(true), "player_met": player_met.duplicate(), "next_split_id": next_split_id, "graveyard": graveyard.map(func(c): return c.to_dict()),
+		"characters": characters.map(func(c): return c.to_dict()), "next_character_id": next_character_id, "departed": departed.duplicate(true), "player_met": player_met.duplicate(), "next_split_id": next_split_id, "houses": houses.duplicate(true), "next_house_id": next_house_id, "graveyard": graveyard.map(func(c): return c.to_dict()),
 	}
 	for f in factions.values():
 		data["factions"].append(f.to_dict())
@@ -2501,6 +3584,8 @@ func _load(data: Dictionary):
 	departed = data["departed"]
 	player_met = data["player_met"]
 	next_split_id = int(data["next_split_id"])
+	houses = data["houses"]
+	next_house_id = int(data["next_house_id"])
 	for entry in data["graveyard"]:
 		graveyard.append(Character.from_dict(entry))
 
@@ -2589,7 +3674,11 @@ func _check_deeds():
 # --- Choice events (doc 14, slice 1) -------------------------------------------------------
 
 # The moments that can bring a choice event, and the faction effects an event option can apply (for a time)
-const EVENT_MOMENTS = ["coming_of_age", "birth", "death", "venture_triumph", "venture_disaster", "pulse"]
+const EVENT_MOMENTS = ["coming_of_age", "birth", "death", "venture_triumph", "venture_disaster", "pulse", "education", "childhood", "match"]
+# What an option can need before it can be picked ("" for nothing)
+const EVENT_NEEDS = ["", "school", "councillor", "match", "house_match"]
+# Who a "marry" option weds: a captain or councillor, someone from the people, or one of a house
+const MARRY_KINDS = ["captain", "people", "house"]
 const EVENT_EFFECTS = ["wealth_income_mult", "trade_income_mult", "food_mult", "scavenge_yield_mult", "defence_mult",
 	"diplomacy_mult", "crew_cap_mult", "owned_daily_grievance", "split_chance_mult", "heir_claim", "demand_acceptance_mult"]
 # How the effects read, for the option buttons and the outliner
@@ -2606,7 +3695,45 @@ func _first_upper(text: String) -> String:
 	return text.substr(0, 1).to_upper() + text.substr(1)
 
 # What an option does, in words: "Food -10%, grievance a day -0.02, for 30 days"
-func event_option_text(option: Dictionary, venture_id: String = "") -> String:
+func event_option_text(option: Dictionary, venture_id: String = "", entry: Dictionary = {}) -> String:
+	var shaping = _child_shaping_text(option, entry)
+	match option.get("marry", ""):
+		"captain":
+			shaping = "They join the family: their loyalty +%d for good; the children lean toward their skills and nature" % GameData.rule("married_in_loyalty")
+		"people":
+			shaping = "One of your people joins the family (Of the People): the children lean that way too"
+		"house":
+			shaping = "They leave their house to join your family; the house's loyalty +20 for good (a house bound by marriage rarely revolts)"
+	if shaping == "" and option.has("note"):
+		shaping = option["note"]
+	if not option.has("days"):
+		return shaping
+	var timed = _timed_option_text(option, venture_id, entry)
+	return timed if shaping == "" else "%s. %s" % [shaping, timed]
+
+# How an option shapes the child: "Leans Brave +2, Command +1", or what an upbringing does each year
+func _child_shaping_text(option: Dictionary, entry: Dictionary) -> String:
+	if option.has("upbringing"):
+		var def = GameData.council()["upbringings"][option["upbringing"]]
+		var skills = []
+		for s in def["skills"]:
+			skills.append(_entry_tutor_skill(entry, option["upbringing"]).capitalize() if s == "$tutor" else ("the parents' best skills" if s == "$parents" else s.capitalize()))
+		var leans = []
+		for t in def["leanings"]:
+			if t.begins_with("$"):
+				leans.append({"$tutor_nature": "the tutor's nature", "$parents_nature": "the parents' nature"}[t])
+			else:
+				leans.append(GameData.character_trait(t)["label"])
+		return "Each year: %s %s faster; leans toward %s" % [" and ".join(skills), "grow" if skills.size() > 1 or "skills" in skills[0] else "grows", " and ".join(leans)]
+	var parts = []
+	var shaping: Dictionary = option.get("child", {})
+	for t in shaping.get("leanings", {}):
+		parts.append("%s %+d" % [GameData.character_trait(t)["label"], shaping["leanings"][t]])
+	for s in shaping.get("skills", {}):
+		parts.append("%s %+d" % ["Best skill" if s == "$best" else s.capitalize(), shaping["skills"][s]])
+	return "" if parts.is_empty() else "%s leans %s" % [entry.get("subject", "The child").get_slice(" ", 0) if entry.get("subject", "") != "" else "The child", ", ".join(parts)]
+
+func _timed_option_text(option: Dictionary, venture_id: String, entry: Dictionary) -> String:
 	var parts = []
 	for name in option.get("effects", {}):
 		var value: float = option["effects"][name]
@@ -2619,7 +3746,9 @@ func event_option_text(option: Dictionary, venture_id: String = "") -> String:
 		var label = GameData.venture(id)["label"] if GameData.ventures().has(id) else "that venture"
 		parts.append("%s odds %+d%%" % [label, roundi((option["venture_odds"][v] - 1.0) * 100)])
 	for s in option.get("skill_odds", {}):
-		parts.append("%s ventures %+d%%" % [s.capitalize(), roundi((option["skill_odds"][s] - 1.0) * 100)])
+		# A councillor who teaches has less time for their own work
+		var skill = ("%s's teaching: %s" % [character_by_id(int(entry["tutor_id"])).name, _entry_tutor_skill(entry, "tutor")]) if s == "$tutor" and character_by_id(int(entry.get("tutor_id", -1))) else s
+		parts.append("%s ventures %+d%%" % [skill.capitalize() if s != "$tutor" else skill, roundi((option["skill_odds"][s] - 1.0) * 100)])
 	return "%s, for %d days" % [", ".join(parts), option["days"]]
 
 # Something happened to a character: a choice event of that kind may follow. The player answers theirs;
@@ -2637,6 +3766,9 @@ func _fire_moment(faction_id: String, moment: String, subject: Character, ventur
 		# The same everyday event won't come back for two years
 		if moment == "pulse" and day - int(f.event_last.get(id, -9999)) < 720:
 			continue
+		# Childhood events fit how the child is being raised, and each comes once per child
+		if moment == "childhood" and subject and (id in subject.childhood or (ev.has("upbringing") and subject.upbringing not in ev["upbringing"])):
+			continue
 		pool.append(id)
 		total += float(ev.get("weight", 1.0))
 	if pool.is_empty():
@@ -2650,13 +3782,23 @@ func _fire_moment(faction_id: String, moment: String, subject: Character, ventur
 			break
 	f.event_last[chosen] = day
 	f.next_event_day = day + rng.randi_range(EVENT_PULSE_DAYS[0], EVENT_PULSE_DAYS[1])
-	var entry = {"event": chosen, "subject": subject.name if subject else "", "venture": venture_id}
+	var entry = {"event": chosen, "subject": subject.name if subject else "", "subject_id": subject.id if subject else -1, "venture": venture_id}
+	if moment == "childhood":
+		subject.childhood.append(chosen)
+	if moment == "education":
+		_offer_tutors(faction_id, entry)
+		subject.upbringing_day = day
+	if moment == "match":
+		var candidate = match_candidate(subject)
+		entry["match_id"] = candidate.id if candidate else -1
+		var from_house = house_match_candidate(subject)
+		entry["house_match_id"] = from_house.id if from_house else -1
 	if faction_id == player_id and f.ai == null:
 		pending_events.append(entry)
 		return
-	# The AI weighs each option by its own leanings, and picks
+	# The AI weighs each option it can take by its own leanings, and picks
 	var options: Array = GameData.events()[chosen]["options"]
-	var weights = options.map(func(o): return float(o.get("ai_weight", 1.0)) * FactionAI.temperament(o["ai_goal"], f))
+	var weights = options.map(func(o): return 0.0 if event_option_blocked(faction_id, entry, o) != "" else float(o.get("ai_weight", 1.0)) * FactionAI.temperament(o["ai_goal"], f))
 	var pick = rng.randf() * weights.reduce(func(a, b): return a + b, 0.0)
 	var index = 0
 	for i in options.size():
@@ -2673,14 +3815,134 @@ func apply_event_option(faction_id: String, entry: Dictionary, index: int):
 		return
 	var ev = GameData.events()[entry["event"]]
 	var option: Dictionary = ev["options"][index]
-	var odds = {}
-	for v in option.get("venture_odds", {}):
-		odds[entry["venture"] if v == "$venture" else v] = option["venture_odds"][v]
-	f.timed_effects.append({"label": ev["title"], "choice": option["label"], "summary": event_option_text(option, entry["venture"]),
-		"until": day + int(option["days"]), "effects": option.get("effects", {}).duplicate(), "venture_odds": odds, "skill_odds": option.get("skill_odds", {}).duplicate()})
-	f.effect_cache.clear()
+	if event_option_blocked(faction_id, entry, option) != "":
+		return
+	var label = event_option_label(entry, option)
+	var summary = event_option_text(option, entry["venture"], entry)
+	if option.has("days"):
+		var odds = {}
+		for v in option.get("venture_odds", {}):
+			odds[entry["venture"] if v == "$venture" else v] = option["venture_odds"][v]
+		var skill_odds = {}
+		for s in option.get("skill_odds", {}):
+			skill_odds[_entry_tutor_skill(entry, "tutor") if s == "$tutor" else s] = option["skill_odds"][s]
+		f.timed_effects.append({"label": ev["title"], "choice": label, "summary": summary,
+			"until": day + int(option["days"]), "effects": option.get("effects", {}).duplicate(), "venture_odds": odds, "skill_odds": skill_odds})
+		f.effect_cache.clear()
+	var child = character_by_id(int(entry.get("subject_id", -1)))
+	if child and option.has("marry") and child.spouse_id < 0:
+		_wed(child, option["marry"], character_by_id(int(entry.get("house_match_id" if option["marry"] == "house" else "match_id", -1))))
+		if faction_id == player_id:
+			var spouse = character_by_id(child.spouse_id)
+			if spouse:
+				event.emit("%s marries %s." % [child.name, spouse.name], "good")
+	if child:
+		if option.has("upbringing"):
+			# A councillor taken off the child's lessons resents it
+			var old_tutor = character_by_id(child.tutor_id) if child.upbringing == "tutor" else null
+			if old_tutor and not (option["upbringing"] == "tutor" and int(entry["tutor_id"]) == old_tutor.id):
+				old_tutor.change_loyalty(GameData.rule("dropped_tutor_loyalty"), "dropped_tutor")
+				if faction_id == player_id:
+					event.emit("%s is no longer %s's tutor, and resents it (loyalty %d)." % [old_tutor.name, child.name, GameData.rule("dropped_tutor_loyalty")], "bad")
+			child.upbringing_day = day
+			child.upbringing = option["upbringing"]
+			child.tutor_id = int(entry["tutor_id"]) if child.upbringing == "tutor" else -1
+			child.tutor_skill = _entry_tutor_skill(entry, child.upbringing) if child.upbringing in ["tutor", "hired"] else ""
+		var shaping: Dictionary = option.get("child", {})
+		for t in shaping.get("leanings", {}):
+			child.leanings[t] = float(child.leanings.get(t, 0.0)) + float(shaping["leanings"][t])
+		for s in shaping.get("skills", {}):
+			var skill = child.best_skill() if s == "$best" else s
+			child.skills[skill] = mini(10, int(child.skills[skill]) + int(shaping["skills"][s]))
 	if faction_id == player_id:
-		event.emit("%s: %s. %s." % [ev["title"], option["label"], event_option_text(option, entry["venture"])], "info")
+		event.emit("%s: %s. %s." % [ev["title"], label, summary], "info")
+
+# The tutor on offer is the ablest councillor; a hired one teaches one skill
+func _offer_tutors(faction_id: String, entry: Dictionary):
+	var tutor: Character = null
+	for c in characters_of(faction_id):
+		if c.post != "" and (tutor == null or c.best_skill_value() > tutor.best_skill_value()):
+			tutor = c
+	entry["tutor_id"] = tutor.id if tutor else -1
+	entry["hired_skill"] = Character.SKILLS[rng.randi() % Character.SKILLS.size()]
+
+# "" if this child's upbringing can be changed now, otherwise why not
+func check_upbringing_change(c: Character) -> String:
+	if c == null or c.death_day >= 0:
+		return "No such child"
+	if c.is_adult():
+		return "%s is grown: their upbringing is behind them" % c.name
+	if c.upbringing == "":
+		return "Chosen when they turn %d (in %d years)" % [GameData.rule("schooling_age"), int(GameData.rule("schooling_age")) - c.age]
+	if pending_events.any(func(e): return int(e.get("subject_id", -1)) == c.id):
+		return "A choice about %s is already waiting" % c.name
+	var wait = c.upbringing_day + int(GameData.rule("upbringing_change_days")) - day
+	if wait > 0:
+		return "Changed lately: wait %d more days" % wait
+	return ""
+
+# The player reopens the choice: the years so far stay with the child, the new upbringing shapes the rest
+func request_upbringing_change(c: Character) -> String:
+	var err = check_upbringing_change(c)
+	if err != "":
+		return err
+	var entry = {"event": "upbringing", "subject": c.name, "subject_id": c.id, "venture": "", "change": true}
+	_offer_tutors(c.faction_id, entry)
+	pending_events.append(entry)
+	return ""
+
+# The player keeps things as they are (only a change of upbringing can be turned down)
+func decline_event():
+	if not pending_events.is_empty() and pending_events[0].get("change", false):
+		pending_events.pop_front()
+
+# "" if the option can be picked, otherwise what's missing and where to get it
+func event_option_blocked(faction_id: String, entry: Dictionary, option: Dictionary) -> String:
+	var child = character_by_id(int(entry.get("subject_id", -1)))
+	if entry.get("change", false) and child and option.get("upbringing", "") == child.upbringing:
+		if child.upbringing != "tutor" or int(entry.get("tutor_id", -1)) == child.tutor_id:
+			return "Already raised this way"
+	match option.get("needs", ""):
+		"school":
+			if not has_school(faction_id):
+				return "Needs a School in your land (Build, in any district you hold)"
+		"councillor":
+			if int(entry.get("tutor_id", -1)) < 0 or character_by_id(int(entry["tutor_id"])) == null:
+				return "Nobody sits on your council to teach: seat a captain in the Council window"
+		"match":
+			var candidate = character_by_id(int(entry.get("match_id", -1)))
+			if candidate == null or candidate.spouse_id >= 0:
+				return "No unmarried captain of a fitting age (recruit more captains, or look to your people)"
+		"house_match":
+			var from_house = character_by_id(int(entry.get("house_match_id", -1)))
+			if from_house == null or from_house.spouse_id >= 0 or from_house.house_id < 0:
+				return "No house has an unmarried match of a fitting age (houses come from Vassalize, or granting land)"
+	return ""
+
+func has_school(faction_id: String) -> bool:
+	for d in districts:
+		if d.owner_id() == faction_id and d.building_effect("school") > 0.0 and buildings_active(d):
+			return true
+	return false
+
+# The skill a tutor on offer would teach: the councillor's best, or the hired tutor's
+func _entry_tutor_skill(entry: Dictionary, upbringing: String) -> String:
+	var tutor = character_by_id(int(entry.get("tutor_id", -1)))
+	if upbringing == "tutor" and tutor:
+		return tutor.best_skill()
+	return String(entry.get("hired_skill", "stewardship"))
+
+# An option's label, with the tutor on offer named
+func event_option_label(entry: Dictionary, option: Dictionary) -> String:
+	var label: String = option["label"]
+	var tutor = character_by_id(int(entry.get("tutor_id", -1)))
+	label = label.replace("{tutor}", "%s (%s %d)" % [tutor.name, tutor.best_skill().capitalize(), tutor.best_skill_value()] if tutor else "nobody free")
+	var from_house = character_by_id(int(entry.get("house_match_id", -1)))
+	label = label.replace("{house}", house(from_house.house_id).get("name", "?") if from_house and from_house.house_id >= 0 else "(none)")
+	label = label.replace("{house_match}", "%s (%d, %s %d)" % [from_house.name, from_house.age, from_house.best_skill().capitalize(), from_house.best_skill_value()] if from_house else "nobody")
+	var candidate = character_by_id(int(entry.get("match_id", -1)))
+	label = label.replace("{match}", "%s (%s, %d, %s %d)" % [candidate.name, GameData.council_post(candidate.post)["label"] if candidate.post != "" else "captain", candidate.age, candidate.best_skill().capitalize(), candidate.best_skill_value()] if candidate else "a captain")
+	return label.replace("{hired}", String(entry.get("hired_skill", "")).capitalize())
 
 # The player answers the first waiting event
 func answer_event(index: int):
@@ -2693,7 +3955,8 @@ func answer_event(index: int):
 func event_text(entry: Dictionary) -> String:
 	var ev = GameData.events()[entry["event"]]
 	var label = GameData.venture(entry["venture"])["label"].to_lower() if entry["venture"] != "" and GameData.ventures().has(entry["venture"]) else "venture"
-	return String(ev["text"]).replace("{name}", entry["subject"] if entry["subject"] != "" else "Someone").replace("{venture}", label)
+	var text: String = ev["change_text"] if entry.get("change", false) and ev.has("change_text") else ev["text"]
+	return text.replace("{name}", entry["subject"] if entry["subject"] != "" else "Someone").replace("{venture}", label)
 
 # Daily: effects wear off; every 3-4 months, an everyday event for each faction
 func _update_events():
@@ -2709,7 +3972,14 @@ func _update_events():
 
 # Routine work that, on your own land, is done as a councillor's standing task
 func is_task(faction_id: String, venture_id: String, d: District) -> bool:
-	return GameData.venture(venture_id).get("task", false) and d.owner_id() == faction_id
+	var def = GameData.venture(venture_id)
+	if not def.get("task", false) or d.owner_id() != faction_id:
+		return false
+	# Answering an attack under way is no routine: any free captain can lead the guard, once
+	return not (def.get("needs", "") == "threat" and under_attack(faction_id, d))
+
+func under_attack(faction_id: String, d: District) -> bool:
+	return incoming_attacks(faction_id).any(func(v): return v.district == d)
 
 func task_of(c: Character) -> StandingTask:
 	for t in tasks:
@@ -2750,6 +4020,8 @@ func council_availability(faction_id: String) -> String:
 # "" if this councillor (-2: the best free one) can take this task here, otherwise why not
 func check_task(faction_id: String, venture_id: String, d: District, character_id: int = -2, crew: int = -1) -> String:
 	if not is_task(faction_id, venture_id, d):
+		if d.owner_id() == faction_id and under_attack(faction_id, d):
+			return "Under attack: any free captain can lead this now, as a one-off"
 		return "Only on your own land"
 	if task_at(faction_id, venture_id, d):
 		return "Already under way here"
@@ -2857,8 +4129,9 @@ func _continue_task(t: StandingTask):
 		return
 	var err = check_launch(t.faction_id, t.venture_id, d, c.id, t.crew, 0, true)
 	if err != "":
-		if t.paused != err and t.faction_id == player_id:
-			event.emit("%s's %s in %s is waiting: %s." % [c.name, GameData.venture(t.venture_id)["label"], d.district_name, err.to_lower()], "alert")
+		# Said once when it starts waiting (the outliner keeps the reason up to date); news, not a reason to pause
+		if t.paused == "" and t.faction_id == player_id:
+			event.emit("%s's %s in %s is waiting: %s." % [c.name, GameData.venture(t.venture_id)["label"], d.district_name, err.to_lower()], "bad")
 		t.paused = err
 		return
 	t.paused = ""
@@ -2996,7 +4269,7 @@ func condition_status(faction_id: String, condition: Dictionary) -> Array:
 			return [not at_war_with_anyone(faction_id), "at peace"]
 	var have = measure(faction_id, condition)
 	var names = {"districts_held": "districts", "secured_districts": "Secured districts", "buildings_owned": "buildings", "trade_agreements": "trade agreements",
-		"alliances": "alliances", "vassals": "vassals", "building_type": GameData.building(condition.get("building", "market"))["label"] + "s"}
+		"alliances": "alliances", "vassals": "tributaries", "building_type": GameData.building(condition.get("building", "market"))["label"] + "s"}
 	return [have >= int(condition["amount"]), "%d %s (you have %d)" % [condition["amount"], names.get(condition["type"], condition["type"]), have]]
 
 # Every way of qualifying for an ambition, each a list of [met, text]: any one fully met option will do

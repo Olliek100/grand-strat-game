@@ -17,6 +17,9 @@ var hovered_venture: String = ""
 var map_view: CityMapView
 var date_label: Label
 var pause_button: Button
+# Why the game paused itself (shown beside the clock until you play on)
+var pause_reason_label: Label
+var pause_reason: String = ""
 var speed_buttons: Array[Button] = []
 var pause_on_alert: CheckBox
 var district_info: RichTextLabel
@@ -41,6 +44,9 @@ var build_buttons: Dictionary = {}
 var building_info: RichTextLabel
 var hovered_building: String = ""
 var economy_info: RichTextLabel
+# Buying materials and arms with wealth (Economy window): {resource: {"label", "buttons"}}
+var buy_box: VBoxContainer
+var buy_rows: Dictionary = {}
 # Ambitions window: the line on top, and one card per National Ambition (id -> widgets)
 # Realm window, Government tab: the current government, and the reforms on offer (rebuilt when they change)
 var government_info: RichTextLabel
@@ -158,6 +164,9 @@ var dynasty_info: RichTextLabel
 var dynasty_tree: VBoxContainer
 var archive_box: VBoxContainer
 var territory_info: RichTextLabel
+# The Houses tab (doc 16): one row per house, rebuilt when something about them changes
+var houses_box: VBoxContainer
+var houses_signature: String = ""
 
 func _ready():
 	add_to_group("portrait_host")
@@ -216,6 +225,8 @@ func _set_paused(value: bool):
 		return
 	paused = value
 	day_timer = 0.0
+	if not value:
+		pause_reason = ""
 	_refresh_top_bar()
 
 func _set_speed(value: int):
@@ -351,6 +362,14 @@ func _build_top_bar():
 	var spacer = Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
+	pause_reason_label = Label.new()
+	pause_reason_label.add_theme_font_size_override("font_size", 13)
+	pause_reason_label.add_theme_color_override("font_color", Color(0.95, 0.65, 0.4))
+	pause_reason_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	pause_reason_label.custom_minimum_size.x = 200
+	pause_reason_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pause_reason_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	row.add_child(pause_reason_label)
 	date_label = Label.new()
 	date_label.add_theme_font_size_override("font_size", 14)
 	row.add_child(date_label)
@@ -643,12 +662,19 @@ func _show_choice():
 	var options: Array = ev["options"]
 	for i in options.size():
 		var index = i
-		var b = _button(options[i]["label"], func(): _on_choice(index))
+		var b = _button(city.event_option_label(entry, options[i]), func(): _on_choice(index))
+		var blocked = city.event_option_blocked(city.player_id, entry, options[i])
+		b.disabled = blocked != ""
+		b.tooltip_text = blocked
 		choice_options.add_child(b)
 		var effect = _rich()
 		effect.custom_minimum_size.x = 500
-		effect.text = "[color=#999999]%s[/color]" % city.event_option_text(options[i], entry["venture"])
+		var text = city.event_option_text(options[i], entry["venture"], entry)
+		effect.text = "[color=#999999]%s[/color]" % (text if blocked == "" else "%s [color=#e3876f](%s)[/color]" % [text, blocked])
 		choice_options.add_child(effect)
+	# A change of upbringing is the player's own idea, so it can be called off
+	if entry.get("change", false):
+		choice_options.add_child(_button("Keep things as they are", _on_choice_declined))
 	choice_popup.visible = true
 	_place_choice.call_deferred()
 
@@ -661,6 +687,19 @@ func _place_choice():
 	choice_popup.size = Vector2.ZERO
 	choice_popup.reset_size()
 	choice_popup.position = ((get_viewport_rect().size - choice_popup.size) * 0.5).max(Vector2.ZERO)
+
+func _change_upbringing(id: int):
+	var err = city.request_upbringing_change(city.character_by_id(id))
+	if err != "":
+		_log(err, "bad")
+	_show_choice()
+
+func _on_choice_declined():
+	city.decline_event()
+	choice_popup.visible = false
+	if not city.pending_events.is_empty():
+		_show_choice()
+	_refresh()
 
 func _on_choice(index: int):
 	city.answer_event(index)
@@ -771,7 +810,27 @@ func _build_diplomacy_window():
 func _build_economy_window():
 	_window("economy", "Economy", "F6")
 	economy_info = _rich()
-	_page("economy", "economy", "Economy").add_child(economy_info)
+	var economy_page = _page("economy", "economy", "Economy")
+	# Buying with wealth: a row per resource, the price on each button
+	buy_box = VBoxContainer.new()
+	economy_page.add_child(buy_box)
+	for resource_type in CityMap.BUYABLE:
+		var row = HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		buy_box.add_child(row)
+		var label = Label.new()
+		label.custom_minimum_size.x = 150
+		row.add_child(label)
+		var buttons = []
+		for amount in [5, 20]:
+			var r = resource_type
+			var n = amount
+			var b = _button("", func(): _on_buy(r, n))
+			row.add_child(b)
+			buttons.append(b)
+		buy_rows[resource_type] = {"label": label, "buttons": buttons}
+	economy_page.add_child(HSeparator.new())
+	economy_page.add_child(economy_info)
 	var traits_page = _page("economy", "traits", "Faction traits")
 	for trait_name in GameData.traits():
 		var t = Trait.new(trait_name, GameData.traits()[trait_name])
@@ -861,12 +920,12 @@ func _refresh_subjects():
 	var lines = []
 	var overlord = city.overlord_of(me)
 	if overlord != "":
-		lines.append("You are a vassal of [url=f:%s][color=%s]%s[/color][/url]: you pay them tribute and can't declare war." % [overlord, _hex(overlord), city.faction_name(overlord)])
+		lines.append("You are a tributary of [url=f:%s][color=%s]%s[/color][/url]: you pay them tribute in food, materials and wealth, make no diplomacy but trade, start no wars, and join theirs with half your force." % [overlord, _hex(overlord), city.faction_name(overlord)])
 	for vid in city.vassals_of(me):
 		var r = city.relation(me, vid)
-		lines.append("[url=f:%s][color=%s][b]%s[/b][/color][/url]: vassal for %d days, opinion of you %+d, %d districts" % [
+		lines.append("[url=f:%s][color=%s][b]%s[/b][/color][/url]: tributary for %d days, opinion of you %+d, %d districts" % [
 			vid, _hex(vid), city.faction_name(vid), city.day - r.vassal_since_day, r.opinion[vid], city.districts_held(vid)])
-	subjects_info.text = "\n".join(lines) if lines.size() > 0 else "[color=#999999]No vassals yet. Small factions up to 70% of your strength may accept you as their patron (Demand vassalage).[/color]"
+	subjects_info.text = "\n".join(lines) if lines.size() > 0 else "[color=#999999]No tributaries yet. Small factions up to 70% of your strength may accept your protection (Demand submission), or a war can make one (the Subjugate war goal).[/color]"
 
 # --- District panel (right, when a district is selected) -----------------------------------
 
@@ -960,13 +1019,37 @@ func _refresh_outliner():
 		lines.append("[b]Envoys (%d)[/b]" % envoys.size())
 		for m in envoys:
 			lines.append("[url=f:%s]%s to the %s[/url] [color=#999999]%dd[/color]" % [m.to_id, GameData.diplomacy_action(m.action_id)["label"], city.faction_name(m.to_id), m.days_left])
+	# Claims under way, yours or against you, with their clocks (doc 15)
+	var claims = []
+	for fid in city.factions:
+		if fid == me:
+			continue
+		var rc = city.relation(me, fid)
+		if rc.claim.get("stage", "") in ["justifying", "ultimatum"]:
+			var days = int(rc.claim["ready_day"] if rc.claim["stage"] == "justifying" else rc.claim["deadline"]) - city.day
+			# Your own claim shows the odds they'd give in today, and whether you can send it now
+			var extra = ""
+			if rc.claim["by"] == me and rc.claim["stage"] == "justifying":
+				extra = ", they'd give in %d%%%s" % [city.ultimatum_acceptance(rc) * 100, " [color=#8bd48b](can send now)[/color]" if city.check_send_early(me, fid) == "" else ""]
+			claims.append("[url=f:%s][color=%s]%s[/color][/url] [color=#e3a86f]%s: %s, %s in %dd%s[/color]" % [fid, _hex(fid), city.faction_name(fid),
+				"your claim" if rc.claim["by"] == me else "their claim", city.claim_text(rc, me), "ultimatum" if rc.claim["stage"] == "justifying" else "answer due", days, extra])
+	if not claims.is_empty():
+		lines.append("[b][color=#e3a86f]Claims[/color][/b]")
+		lines.append_array(claims)
 	var wars = city.war_enemies(me)
 	if not wars.is_empty():
 		lines.append("[b][color=#ff7a5c]At war[/color][/b]")
 		for fid in wars:
 			var r = city.relation(me, fid)
-			lines.append("[url=f:%s][color=%s]%s[/color][/url] [color=#999999]%d days, your weariness %d, theirs %d[/color]" % [fid, _hex(fid), city.faction_name(fid),
-				city.day - r.war_start_day, r.exhaustion[me], r.exhaustion[fid]])
+			# Whether they'd make peace now, so a war doesn't run on unseen (playtest: 474 days at weariness 100)
+			var peace = city.check_peace(me, fid)
+			var goal_line = ""
+			if r.claim.get("stage", "") == "war":
+				goal_line = " [color=#ff7a66]%s goal: %s, score %+d of %d[/color]" % ["your" if r.claim["by"] == me else "their", city.claim_text(r, me),
+					city.war_score(r), GameData.war_goal(r.claim["goal"])["price"]]
+			lines.append("[url=f:%s][color=%s]%s[/color][/url] [color=#999999]%d days, your weariness %d, theirs %d[/color]%s %s" % [fid, _hex(fid), city.faction_name(fid),
+				city.day - r.war_start_day, r.exhaustion[me], r.exhaustion[fid], goal_line,
+				"[color=#8bd48b]they'd accept peace now (click)[/color]" if peace == "" else "[color=#777777](%s)[/color]" % peace.to_lower()])
 	var neighbours = city.factions.keys().filter(func(fid): return fid != me and city.shares_border(me, fid))
 	if not neighbours.is_empty():
 		lines.append("[b]Neighbours[/b]")
@@ -980,6 +1063,8 @@ func _refresh_top_bar():
 	date_label.tooltip_text = city.date_string()
 	date_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	pause_button.text = "Play" if paused else "Pause"
+	pause_reason_label.text = ("Paused: " + pause_reason) if paused and pause_reason != "" else ""
+	pause_reason_label.tooltip_text = pause_reason_label.text + ("\n\nTurn this off in the menu: \"Pause when something needs you\"." if pause_reason_label.text != "" else "")
 	for i in speed_buttons.size():
 		speed_buttons[i].button_pressed = (i + 1 == speed)
 	var p = _player()
@@ -1097,12 +1182,15 @@ func _refresh_alerts(economy: Dictionary):
 		list.append(_alert("incoming:%d:%s" % [d.id, v.faction_id], "urgent", "%s %dd" % [GameData.venture(v.venture_id)["label"], v.days_left],
 			"INCOMING: %s %s on %s lands in %d days (%d%% to succeed).\nClick to Reinforce it." % [attacker.display_name, GameData.venture(v.venture_id)["label"], d.district_name, v.days_left, odds * 100],
 			func(): _goto_venture(d, "reinforce")))
+	# A claim against you: its goal and when the ultimatum comes (doc 15)
 	for fid in city.factions:
-		var ai: FactionAI = city.factions[fid].ai
-		if ai and ai.war_plan_target == p.id and ai.war_plan_day >= city.day:
+		var rc = city.relation(p.id, fid)
+		if rc.claim.get("by", "") == fid and rc.claim["stage"] == "justifying":
 			var them = fid
-			list.append(_alert("war:" + fid, "urgent", "War %dd" % (ai.war_plan_day - city.day),
-				"WAR COMING: the %s will likely declare war in %d days.\nOffer gifts or a pact, or arm up and Reinforce your border. Click for diplomacy." % [city.faction_name(fid), ai.war_plan_day - city.day],
+			var days = int(rc.claim["ready_day"]) - city.day
+			list.append(_alert("claim:" + fid, "urgent", "Claim %dd" % days,
+				"The %s are justifying a claim on you: %s%s. Their ultimatum comes in %d days: give in then, or it's war over it.\nMake yourself stronger (arms, guards, allies), or talk to them. Click for diplomacy." % [
+				city.faction_name(fid), city.claim_text(rc, p.id), (" (because %s)" % rc.claim["reason"]) if rc.claim["reason"] != "" else " (with no cause)", days],
 				func(): _open_faction_panel(them, Vector2(-1, -1))))
 	if home and home.owner_id() != p.id:
 		list.append(_alert("home_lost", "urgent", "Shelter lost", "You've lost your shelter.", func(): pass))
@@ -1112,7 +1200,7 @@ func _refresh_alerts(economy: Dictionary):
 	if p.disrepair:
 		list.append(_alert("disrepair", "urgent", "Disrepair", "Out of materials: your buildings are in disrepair and not working.\nScavenge or run trade for materials.", func(): _goto_venture(home, "scavenge")))
 	elif p.materials < 10.0:
-		list.append(_alert("materials", "pressing", "Materials %d" % p.materials, "Few materials (%d).\nScavenge ruins, yours or unclaimed next door." % p.materials, func(): _goto_venture(home, "scavenge")))
+		list.append(_alert("materials", "pressing", "Materials %d" % p.materials, "Few materials (%d).\nBuy them with wealth (Economy window: click), scavenge ruins, or build a Salvage Yard or Recycling Works." % p.materials, func(): _open_window("economy", "economy")))
 	var wealth_day = economy["wealth"]["income"] - economy["wealth"]["upkeep"]
 	if wealth_day < 0.0 and p.wealth < 20.0:
 		list.append(_alert("wealth", "urgent", "Wealth", "Wealth is running out (%s a day): buildings stop and the council goes unpaid." % _signed(wealth_day), func(): _open_window("economy")))
@@ -1133,7 +1221,7 @@ func _refresh_alerts(economy: Dictionary):
 			"The %s (%s) border you. Your arms %d, theirs %d.\nGather Weapons, Safeguard, a Watchtower or Reinforce; or make a pact, pay tribute or Threaten them. Click for diplomacy." % [them.display_name, why, p.arms, them.arms],
 			func(): _open_faction_panel(target, Vector2(-1, -1))))
 	if p.arms < 2.0:
-		list.append(_alert("arms", "pressing", "No arms", "No weapons: you can't raid or assault, and raiders face no armed defence.\nGather Weapons.", func(): _goto_venture(home, "gather_weapons")))
+		list.append(_alert("arms", "pressing", "No arms", "No weapons: your crews fight unarmed (each armed one counts +%d%%), and raiders face no armed defence.\nBuy arms with wealth (Economy window: click), or Gather Weapons." % (GameData.rule("force_armed_bonus") * 100), func(): _open_window("economy", "economy")))
 	if p.manpower < 3.0:
 		list.append(_alert("manpower", "pressing", "Manpower", "Almost no idle manpower. People come from food: feed your districts.", func(): _open_window("economy")))
 	# People: empty seats, restless crew, the succession
@@ -1283,6 +1371,9 @@ func _build_realm_window():
 	territory_info = _rich()
 	territory_info.meta_clicked.connect(_on_link_clicked)
 	_page("realm", "territory", "Territory").add_child(territory_info)
+	houses_box = VBoxContainer.new()
+	houses_box.add_theme_constant_override("separation", 8)
+	_page("realm", "houses", "Houses").add_child(houses_box)
 	var government = _page("realm", "government", "Government")
 	government_info = _rich()
 	government.add_child(government_info)
@@ -1374,14 +1465,71 @@ func _refresh_realm():
 				archive_box.add_child(none)
 		"government":
 			_refresh_government()
+		"houses":
+			_refresh_houses()
 		"territory":
 			var lines = ["[b]%d districts[/b] [color=#999999](click to go there)[/color]" % city.districts_held(me)]
 			for d in city.districts:
 				if d.owner_id() == me:
-					lines.append("[url=d:%d][b]%s[/b][/url]  control %d  ·  food %+.2f  ·  people %d  ·  defence %d%%  ·  grievance %d%s" % [
-						d.id, d.district_name, d.share(me), city.district_food(d), d.population, city.defence_total(d) * 100, d.grievance,
+					lines.append("[url=d:%d][b]%s[/b][/url]  control %d  ·  food %+.2f  ·  people %d  ·  garrison %d/%d  ·  grievance %d%s" % [
+						d.id, d.district_name, d.share(me), city.district_food(d), d.population, d.garrison, city.garrison_ceiling(d), d.grievance,
 						("  ·  " + ", ".join(d.building_labels())) if not d.buildings.is_empty() else ""])
 			territory_info.text = "\n".join(lines)
+
+# The houses inside your faction: who leads each, how loyal it is and why, what it holds, and the call to arms
+func _refresh_houses():
+	var me = city.player_id
+	var mine = city.houses_of(me)
+	var signature = "%d|%s" % [city.day / 30, str(mine.map(func(h): return [h["id"], roundi(city.house_loyalty(int(h["id"]))), city.house_districts(int(h["id"])).size(), h["asked_war"]]))]
+	if signature == houses_signature:
+		return
+	houses_signature = signature
+	for child in houses_box.get_children():
+		child.queue_free()
+	if mine.is_empty():
+		var none = _rich()
+		none.text = "[color=#999999]No houses yet. Right-click a grown member of your family, or a loyal captain (loyalty %d+), and grant them a district: they found a house. Absorbing a faction (the Vassalize war goal) makes its ruling family a house too.[/color]" % GameData.rule("house_grant_min_loyalty")
+		houses_box.add_child(none)
+		return
+	for h in mine:
+		var id = int(h["id"])
+		var head = city.house_head(id)
+		var row = HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		houses_box.add_child(row)
+		if head:
+			row.add_child(_person_cell(head, "Head"))
+		var text = _rich()
+		text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var loyalty = city.house_loyalty(id)
+		var reasons = head.loyalty_breakdown().map(func(part): return "%+d %s" % [part[1], part[0]]) if head else []
+		var lands = city.house_districts(id).map(func(d): return "[url=d:%d]%s[/url]" % [d.id, d.district_name])
+		text.text = "[b]House %s[/b]  ·  %d members  ·  [color=%s]loyalty %d[/color]%s\nHolds %s (keeps %d%% of their income)\n[color=#999999]%s[/color]" % [
+			h["name"], city.house_members(id).size(), _loyalty_color(loyalty), loyalty,
+			"  [color=#e3876f]restless: may break away[/color]" if int(h["restless_since"]) >= 0 else "",
+			", ".join(lands), GameData.rule("house_income_share") * 100, ", ".join(reasons)]
+		if not text.meta_clicked.is_connected(_on_link_clicked):
+			text.meta_clicked.connect(_on_link_clicked)
+		row.add_child(text)
+		var call = _button("Ask to fight", func(): _on_call_house(id))
+		var err = city.check_call_house(me, id)
+		call.disabled = err != ""
+		call.tooltip_text = err if err != "" else "They may decline (likelier the less loyal they are: about %d%% they agree). If they agree, fighters from their districts' garrisons join your manpower, and their loyalty rises." % (clampf(loyalty / 100.0 + 0.2, 0.1, 0.95) * 100)
+		row.add_child(call)
+
+func _grant_land(character_id: int):
+	var err = city.grant_land(city.player_id, city.character_by_id(character_id), selected)
+	if err != "":
+		_log(err, "bad")
+	houses_signature = ""
+	_refresh()
+
+func _on_call_house(house_id: int):
+	var err = city.call_house(city.player_id, house_id)
+	if err != "":
+		_log(err, "bad")
+	houses_signature = ""
+	_refresh()
 
 # Your government, how it passes on and breaks, and the reforms you could take: what each needs,
 # what it costs, and who on the council is for or against it
@@ -1605,6 +1753,24 @@ func _make_card(fid: String) -> Dictionary:
 	var war_button = _button("", func(): _on_war_button_pressed(fid))
 	war_button.mouse_entered.connect(func(): hovered_diplomacy[fid] = "war"; _refresh_diplomacy())
 	flow.add_child(war_button)
+	# War goals (doc 15): justify one, and the ultimatum follows; at war, take your terms or give in to theirs
+	var goals = {}
+	for goal_id in CityMap.WAR_GOALS:
+		var g = goal_id
+		var b = _button("", func(): _on_goal_pressed(g, fid))
+		b.mouse_entered.connect(func(): hovered_diplomacy[fid] = "goal_" + g; _refresh_diplomacy())
+		flow.add_child(b)
+		goals[goal_id] = b
+	var settle_war = _button("", func(): _on_settle_war_pressed(fid))
+	settle_war.mouse_entered.connect(func(): hovered_diplomacy[fid] = "settle_war"; _refresh_diplomacy())
+	flow.add_child(settle_war)
+	# Your claim under way: send the ultimatum early (when strong enough), or drop it
+	var send_now = _button("Send ultimatum now", func(): _on_claim_action(fid, "send"))
+	send_now.mouse_entered.connect(func(): hovered_diplomacy[fid] = "send_now"; _refresh_diplomacy())
+	flow.add_child(send_now)
+	var withdraw = _button("Withdraw claim", func(): _on_claim_action(fid, "withdraw"))
+	withdraw.mouse_entered.connect(func(): hovered_diplomacy[fid] = "withdraw"; _refresh_diplomacy())
+	flow.add_child(withdraw)
 	# Why the greyed-out actions can't be taken, spelled out rather than hidden in tooltips
 	var blocked = _rich()
 	blocked.custom_minimum_size.x = CARD_WIDTH
@@ -1612,7 +1778,7 @@ func _make_card(fid: String) -> Dictionary:
 	var detail = _rich()
 	detail.custom_minimum_size.x = CARD_WIDTH
 	card.add_child(detail)
-	return {"root": card, "info": info, "actions": actions, "breaks": breaks, "war": war_button, "blocked": blocked, "detail": detail, "council": council, "council_signature": ""}
+	return {"root": card, "info": info, "actions": actions, "breaks": breaks, "war": war_button, "goals": goals, "settle_war": settle_war, "send_now": send_now, "withdraw": withdraw, "blocked": blocked, "detail": detail, "council": council, "council_signature": ""}
 
 # --- Faction panel (right-click a faction's territory) ------------------------------
 
@@ -1712,7 +1878,7 @@ func _faction_summary(fid: String) -> String:
 		_hex(fid), city.faction_name(fid), status, r.opinion[fid], _stance_text(fid), _treaties_text(r)]
 
 # How an AI faction regards you, coloured by danger, with its reason
-const STANCE_COLORS = {"ENEMY": "#ff5a4a", "PREPARING WAR": "#ff5a4a", "TARGET": "#ff9a4a", "WARY": "#e0c060",
+const STANCE_COLORS = {"ENEMY": "#ff5a4a", "PRESSING A CLAIM": "#ff5a4a", "TARGET": "#ff9a4a", "WARY": "#e0c060",
 	"NEUTRAL": "#b0b0b0", "CORDIAL": "#9ad08a", "FRIENDLY": "#7ad07a", "WANTS ALLIANCE": "#7ac0e0"}
 
 func _stance_text(fid: String) -> String:
@@ -1732,7 +1898,7 @@ func _treaties_text(r: Relation) -> String:
 		var renew = " [color=#ffb347]renew now[/color]" if Diplomacy.in_renewal_window(city, r) else ""
 		parts.append("%s (%d days left%s)" % ["Defensive alliance" if r.alliance else "Non-aggression pact", days_left, renew])
 	if r.overlord != "":
-		parts.append("Your vassal" if r.overlord == city.player_id else "Your overlord")
+		parts.append("Your tributary" if r.overlord == city.player_id else "Your suzerain")
 	return ", ".join(parts) if parts.size() > 0 else "none"
 
 func _refresh_card(row: Dictionary, fid: String):
@@ -1761,6 +1927,7 @@ func _refresh_card(row: Dictionary, fid: String):
 		text += "At peace (truce for %d more days)\n" % (r.truce_until_day - city.day)
 	else:
 		text += "At peace\n"
+	text += _claim_status(r)
 	text += "Treaties: %s\n" % _treaties_text(r)
 	# Where its effort has gone lately: a faction growing wide leaves its home land thin, one building up gets harder to hit
 	var lean: Dictionary = city.factions[fid].lean
@@ -1818,6 +1985,20 @@ func _refresh_card(row: Dictionary, fid: String):
 			applies = r.menaced_recently(fid, city.day, int(GameData.rule("menace_memory_days")))
 		elif action_id == "demand":
 			applies = city.shares_border(me, fid)
+		elif action_id == "match":
+			# Only when you have someone to offer; the button names the pair
+			var mine = city.match_offer(me)
+			applies = mine != null
+			if applies:
+				var theirs = city.match_partner(mine, fid)
+				if theirs:
+					b.text = "Propose a match: %s and %s%s" % [mine.name.get_slice(" ", 0), theirs.name.get_slice(" ", 0), label.trim_prefix(def["label"])]
+		elif action_id == "backing":
+			# Only while you're pressing a claim on someone else
+			var claimed = city.pressing_claim_on(me)
+			applies = claimed != "" and claimed != fid
+			if applies:
+				b.text = "Back our claim on the %s%s" % [city.faction_name(claimed), label.trim_prefix(def["label"])]
 		b.visible = applies
 		if err != "" and applies:
 			blocked.append("[color=#bbbbbb]%s:[/color] %s" % [def["label"], err])
@@ -1825,20 +2006,58 @@ func _refresh_card(row: Dictionary, fid: String):
 	row["breaks"]["trade"].visible = r.trade
 	row["breaks"]["pact"].text = "Break alliance" if r.alliance else "Break pact"
 	row["breaks"]["pact"].visible = (r.pact or r.alliance) and r.overlord == ""
-	row["breaks"]["vassal"].text = "Release vassal" if r.overlord == me else "Declare independence"
+	row["breaks"]["vassal"].text = "Release tributary" if r.overlord == me else "Declare independence"
 	row["breaks"]["vassal"].visible = r.overlord != ""
+	# At war: peace (a white peace when there's a goal: it lapses). At peace: justify a war goal instead of declaring war
 	var war_button: Button = row["war"]
-	var err = ""
+	war_button.visible = r.at_war
 	if r.at_war:
-		war_button.text = "Accept their peace offer" if r.peace_offered_by == fid else "Offer peace"
-		err = city.check_peace(me, fid)
-	else:
-		war_button.text = "Declare war (%d wealth)" % GameData.rule("war_cost").get("wealth", 0)
-		err = city.check_declare_war(me, fid)
-	war_button.disabled = err != ""
-	war_button.tooltip_text = err
-	if err != "":
-		blocked.append("[color=#bbbbbb]%s:[/color] %s" % ["Peace" if r.at_war else "War", err])
+		war_button.text = "Accept their peace offer" if r.peace_offered_by == fid else ("Offer white peace" if not r.claim.is_empty() else "Offer peace")
+		var err = city.check_peace(me, fid)
+		war_button.disabled = err != ""
+		war_button.tooltip_text = err
+		if err != "":
+			blocked.append("[color=#bbbbbb]Peace:[/color] %s" % err)
+	var goal_errors = []
+	for goal_id in row["goals"]:
+		var b: Button = row["goals"][goal_id]
+		b.visible = not r.at_war and r.claim.is_empty()
+		if not b.visible:
+			continue
+		var target = city.claim_district(me, fid, selected)
+		var cost = _cost_text(city.justify_cost(me, fid, goal_id))
+		b.text = ("Claim %s (%s)" % [target.district_name, cost]) if goal_id == "claim" and target else "%s (%s)" % [GameData.war_goal(goal_id)["label"], cost]
+		var err = city.check_justify(me, fid, goal_id, selected)
+		b.disabled = err != ""
+		b.tooltip_text = err
+		if err != "" and err not in goal_errors:
+			goal_errors.append(err)
+	if not goal_errors.is_empty():
+		blocked.append("[color=#bbbbbb]War goals:[/color] %s" % "; ".join(goal_errors))
+	# Your claim before any war: send the ultimatum early when your side is strong enough, or withdraw it
+	var mine_pending = r.claim.get("by", "") == me and r.claim["stage"] != "war"
+	var send_now: Button = row["send_now"]
+	send_now.visible = mine_pending and r.claim["stage"] == "justifying"
+	if send_now.visible:
+		var err = city.check_send_early(me, fid)
+		send_now.disabled = err != ""
+		send_now.tooltip_text = err
+		if err != "":
+			blocked.append("[color=#bbbbbb]Send ultimatum now:[/color] %s; ask other factions to back your claim" % err)
+	row["withdraw"].visible = mine_pending
+	# In a war over a goal: the claimant takes its terms when it can; the other side can give in
+	var settle: Button = row["settle_war"]
+	settle.visible = r.at_war and r.claim.get("stage", "") == "war"
+	if settle.visible:
+		if r.claim["by"] == me:
+			settle.text = "Enforce: %s" % city.claim_text(r)
+			var err = city.check_enforce(me, fid)
+			settle.disabled = err != ""
+			settle.tooltip_text = err
+		else:
+			settle.text = "Give in to their terms"
+			settle.disabled = false
+			settle.tooltip_text = "End the war on their terms: %s." % city.claim_text(r, city.player_id)
 	row["blocked"].text = ("[font_size=13][color=#e3a86f]Not available now[/color]\n[color=#999999]%s[/color][/font_size]" % "\n".join(blocked)) if blocked.size() > 0 else ""
 	row["detail"].text = _diplomacy_detail(fid, hovered_diplomacy.get(fid, ""))
 
@@ -1855,9 +2074,44 @@ func _diplomacy_detail(fid: String, action_id: String) -> String:
 		"break_vassal":
 			if city.relation(me, fid).overlord == me:
 				return "Frees them. They'll be grateful (opinion +20), but you lose their tribute."
-			return "Stop paying tribute. Your overlord will declare war on you."
+			return "Stop paying tribute. Your suzerain will declare war on you."
 		"war":
-			return "War unlocks Assault on their border districts. Their allies, overlord and vassals join in. Treaties between you end."
+			return "Ends the war with no terms: any war goal lapses, and a truce holds for %d days." % GameData.rule("truce_days")
+		"send_now":
+			var rn = city.relation(me, fid)
+			if rn.claim.is_empty():
+				return ""
+			return "Sends your ultimatum now, before the claim is fully justified. Possible once your side (with allies and backers) is %.1fx theirs: strong enough that they'd likely give in (now %.1fx). Ask other factions to back your claim to get there sooner." % [
+				GameData.war_goal(rn.claim["goal"])["accept_need"], city.claim_strength_ratio(rn)]
+		"withdraw":
+			return "Drops your claim. What you paid to justify it is gone, and their grudge fades in time."
+		"settle_war":
+			var rs = city.relation(me, fid)
+			if rs.claim.get("by", "") == me:
+				return "Takes your terms (%s) and ends the war. Possible once the war score reaches %d: fights won and land taken (the claimed district counts double), and being less worn out than them." % [city.claim_text(rs), GameData.war_goal(rs.claim["goal"])["price"]]
+			return "Ends the war on their terms (%s). Otherwise it ends when their war score reaches %d, a side is worn out (at 100 the worn-out side loses), or by peace." % [city.claim_text(rs), GameData.war_goal(rs.claim["goal"])["price"]]
+	if action_id.begins_with("goal_"):
+		var goal_id = action_id.substr(5)
+		var goal = GameData.war_goal(goal_id)
+		var reason = city.claim_reason(me, fid)
+		var lines = ["[b]%s[/b]: %s" % [goal["label"], goal["description"]]]
+		lines.append("Justify for %d days (%s), then an ultimatum: they have %d days to give in. Refused, it's war over it until the war score reaches %d." % [
+			city.justify_days(me, fid, goal_id), ("you have cause: %s, so half price" % reason) if reason != "" else "no cause: half as long again, full price, and everyone thinks less of you",
+			GameData.rule("ultimatum_days"), goal["price"]])
+		lines.append("Costs %s. They'll know the moment you start." % _cost_text(city.justify_cost(me, fid, goal_id)))
+		lines.append("Chance they give in without a fight: about %d%% (the stronger you and your friends are next to them and theirs, the likelier). Your allies join the war if it comes." % (city.acceptance_of_goal(me, fid, goal_id) * 100))
+		lines.append("Each time they raid you while you justify it, your ultimatum comes %d days sooner." % GameData.rule("claim_raid_cut_days"))
+		var oath = city.oath_broken(me, fid)
+		if oath != "":
+			lines.append("[color=#e3876f]This breaks %s: every faction thinks much less of you (%d), and it takes years to fade.[/color]" % [oath, GameData.rule("claim_oathbreaker_opinion")])
+		if goal_id == "claim":
+			var d = city.claim_district(me, fid, selected)
+			if d:
+				lines.append("Names %s (select one of their districts on your border first to pick another)." % d.district_name)
+		var err = city.check_justify(me, fid, goal_id, selected)
+		if err != "":
+			lines.append("[color=#ffb347]%s[/color]" % err)
+		return "\n".join(lines)
 	var def = GameData.diplomacy_action(action_id)
 	var text = "[b]%s[/b]: %s\nEnvoy travels %d days. Costs %s." % [def["label"], def["description"], def["days"],
 		_cost_text(Diplomacy.action_cost(city, action_id, city.player_id, fid))]
@@ -1886,13 +2140,37 @@ func _refresh_proposals():
 	proposals_box.add_child(_header("Proposals awaiting your answer"))
 	for i in city.proposals.size():
 		var p = city.proposals[i]
-		var def = GameData.diplomacy_action(p["action"])
 		var label = _rich()
-		label.text = "[color=%s]%s[/color] propose %s. [color=#999999]%s Expires in %d days.[/color]" % [
-			_hex(p["from"]), city.faction_name(p["from"]), def.get("proposal", p["action"]), def["description"], p["expires_day"] - city.day]
+		# An ultimatum: their demand, what each answer means, and the force on each side
+		if p["action"] == "ultimatum":
+			var r = city.relation(p["from"], city.player_id)
+			var goal = GameData.war_goal(r.claim["goal"])
+			var yours = city.faction_strength(city.player_id)
+			for fid in city.defenders_of(city.player_id):
+				if fid != p["from"]:
+					yours += city.faction_strength(fid)
+			var demand = String(goal["demand"]).replace("{district}", city.districts[int(r.claim["district"])].district_name if int(r.claim["district"]) >= 0 else "")
+			label.text = "[b]Ultimatum:[/b] [color=%s]%s[/color]: \"%s\". [color=#999999]%s\nGive in: it's done, with no fight. Refuse, or let %d days pass: war over it, ended when their war score reaches %d (they need fights won and land taken), a side is worn out, or by peace.\nStrength: theirs %d, yours with your friends %d.[/color]" % [
+				_hex(p["from"]), city.faction_name(p["from"]), demand[0].to_upper() + demand.substr(1),
+				goal["description"], p["expires_day"] - city.day, goal["price"], city.faction_strength(p["from"]), yours]
+			proposals_box.add_child(label)
+			var choice = HBoxContainer.new()
+			choice.add_child(_button("Give in", func(): city.answer_proposal(i, true); _refresh()))
+			choice.add_child(_button("Refuse: war", func(): city.answer_proposal(i, false); _refresh()))
+			proposals_box.add_child(choice)
+			continue
+		var def = GameData.diplomacy_action(p["action"])
+		var accept_text = "Accept"
+		if def["kind"] == "tribute":
+			accept_text = "Accept %s" % Diplomacy._amount_text(Diplomacy.tribute_price(city, p["from"], city.player_id))
+			label.text = "[color=%s]%s[/color] offer tribute. [color=#999999]Accept and you can't raid them for %d days (if they attack you, the promise is void). Decline and nothing changes. Expires in %d days.[/color]" % [
+				_hex(p["from"]), city.faction_name(p["from"]), def["spare_days"], p["expires_day"] - city.day]
+		else:
+			label.text = "[color=%s]%s[/color] propose %s. [color=#999999]%s Expires in %d days.[/color]" % [
+				_hex(p["from"]), city.faction_name(p["from"]), def.get("proposal", p["action"]), def["description"], p["expires_day"] - city.day]
 		proposals_box.add_child(label)
 		var buttons = HBoxContainer.new()
-		buttons.add_child(_button("Accept", func(): city.answer_proposal(i, true); _refresh()))
+		buttons.add_child(_button(accept_text, func(): city.answer_proposal(i, true); _refresh()))
 		buttons.add_child(_button("Decline", func(): city.answer_proposal(i, false); _refresh()))
 		proposals_box.add_child(buttons)
 
@@ -1908,12 +2186,50 @@ func _on_break_pressed(treaty: String, faction_id: String):
 		_log(err, "bad")
 	_refresh()
 
+# A war goal between you and them, in one line with its clock ("" if none)
+func _claim_status(r: Relation) -> String:
+	if r.claim.is_empty():
+		return ""
+	var by: String = r.claim["by"]
+	var who = "You" if by == city.player_id else "The %s" % city.faction_name(by)
+	var reason = (" (because %s)" % r.claim["reason"]) if r.claim["reason"] != "" else " (no cause)"
+	# The odds the ultimatum would be accepted today, and who's backing the claim
+	var backers = city.claim_backers(by, r.other(by))
+	var odds = " They'd give in now: %d%% (sides %.1f to 1)%s." % [city.ultimatum_acceptance(r) * 100, city.claim_strength_ratio(r),
+		("; backed by " + ", ".join(backers.map(func(fid): return "the " + city.faction_name(fid)))) if not backers.is_empty() else ""]
+	match r.claim["stage"]:
+		"justifying":
+			return "[color=#e3a86f]%s are justifying a claim: %s%s. Ultimatum in %d days.%s[/color]\n" % [who, city.claim_text(r, city.player_id), reason, int(r.claim["ready_day"]) - city.day, odds]
+		"ultimatum":
+			return "[color=#e3a86f]Ultimatum from %s: %s. Answer due in %d days.[/color]\n" % ["you" if by == city.player_id else "the " + city.faction_name(by), city.claim_text(r, city.player_id), int(r.claim["deadline"]) - city.day]
+		"war":
+			return "[color=#ff7a66]War goal (%s): %s. War score %+d of %d needed.[/color]\n" % ["yours" if by == city.player_id else "theirs", city.claim_text(r, city.player_id),
+				city.war_score(r), GameData.war_goal(r.claim["goal"])["price"]]
+	return ""
+
+func _on_goal_pressed(goal_id: String, faction_id: String):
+	var err = city.justify(city.player_id, faction_id, goal_id, selected)
+	if err != "":
+		_log(err, "bad")
+	_refresh()
+
+func _on_claim_action(faction_id: String, what: String):
+	var err = city.send_ultimatum_early(city.player_id, faction_id) if what == "send" else city.withdraw_claim(city.player_id, faction_id)
+	if err != "":
+		_log(err, "bad")
+	_refresh()
+
+# Take your terms (you pressed the claim) or give in to theirs (they did)
+func _on_settle_war_pressed(faction_id: String):
+	var r = city.relation(city.player_id, faction_id)
+	var err = city.enforce_claim(city.player_id, faction_id) if r.claim.get("by", "") == city.player_id else city.concede_claim(city.player_id, faction_id)
+	if err != "":
+		_log(err, "bad")
+	_refresh()
+
+# The war button only makes peace now: wars start from a war goal and a refused ultimatum
 func _on_war_button_pressed(faction_id: String):
-	var err = ""
-	if city.is_at_war(city.player_id, faction_id):
-		err = city.make_peace(city.player_id, faction_id)
-	else:
-		err = city.declare_war(city.player_id, faction_id)
+	var err = city.make_peace(city.player_id, faction_id)
 	if err != "":
 		_log(err, "bad")
 	_refresh()
@@ -2199,8 +2515,29 @@ func _cost_text(costs: Dictionary) -> String:
 	return ", ".join(parts) if parts.size() > 0 else "free"
 
 # Where resources come from and go, so you can see what buildings cost you
+func _on_buy(resource_type: String, amount: int):
+	var err = city.buy(city.player_id, resource_type, amount)
+	if err != "":
+		_log(err, "bad")
+	_refresh()
+
 func _refresh_economy():
 	var p = _player()
+	# Buying: the going price per unit, and what each lot costs now
+	for resource_type in buy_rows:
+		var row: Dictionary = buy_rows[resource_type]
+		var each = city.buy_price(p.id, resource_type, 1)
+		row["label"].text = "Buy %s (%.1f each)" % [resource_type, each]
+		row["label"].tooltip_text = "Wealth buys %s at once. Each one you buy raises the price %d%% for a while; it eases back %d%% a day. Cheaper ways: %s." % [
+			resource_type, GameData.rule("buy_price_rise") * 100, GameData.rule("buy_recent_decay") * 100,
+			"scavenging ruins, a Salvage Yard or Recycling Works, Trade Runs" if resource_type == "materials" else "Gather Weapons (a councillor's task)"]
+		for i in row["buttons"].size():
+			var amount = [5, 20][i]
+			var b: Button = row["buttons"][i]
+			var err = city.check_buy(p.id, resource_type, amount)
+			b.text = "%d for %d wealth" % [amount, ceili(city.buy_price(p.id, resource_type, amount))]
+			b.disabled = err != ""
+			b.tooltip_text = err
 	var e = city.daily_economy(p.id)
 	var text = "[b]Daily economy[/b]\n"
 	for resource_type in ["supplies", "wealth"]:
@@ -2422,6 +2759,9 @@ func _on_city_event(text: String, kind: String):
 	if kind == "alert":
 		if pause_on_alert.button_pressed and not paused:
 			_set_paused(true)
+			# Say why beside the clock, so a pause never comes out of nowhere
+			pause_reason = text
+			_refresh_top_bar()
 
 
 # Choosing a venture opens it in the planner below the list
@@ -2702,7 +3042,7 @@ const SKILL_TIPS = {
 	"stewardship": "Stewardship: running things. Food, scavenging, settling, trade, relief, rebuilding.",
 }
 const TRAIT_COLORS = {"personality": [Color(0.24, 0.17, 0.3), Color(0.62, 0.45, 0.78)], "earned": [Color(0.14, 0.22, 0.3), Color(0.45, 0.66, 0.85)],
-	"ruling": [Color(0.3, 0.24, 0.1), Color(0.85, 0.7, 0.35)]}
+	"ruling": [Color(0.3, 0.24, 0.1), Color(0.85, 0.7, 0.35)], "upbringing": [Color(0.14, 0.26, 0.2), Color(0.45, 0.78, 0.6)]}
 
 func _build_character_window():
 	_window("character", "Character", "F1")
@@ -2784,8 +3124,8 @@ func _refresh_character():
 	char_name.tooltip_text = "\n\n".join(tip)
 	var rel = _relatives(c)
 	var heir: Character = city.succession_outlook(c.faction_id)["heir"] if c.is_leader and alive and f else null
-	var signature = "%d|%d|%d|%s|%s|%d|%d|%s|%s|%d" % [c.id, c.age, c.spouse_id, str(c.traits), str(c.skills), rel["children"].size(), rel["siblings"].size(),
-		c.post, str(heir.id) if heir else "-", f.designated_heir if f else -1]
+	var signature = "%d|%d|%d|%s|%s|%d|%d|%s|%s|%d|%s|%s" % [c.id, c.age, c.spouse_id, str(c.traits), str(c.skills), rel["children"].size(), rel["siblings"].size(),
+		c.post, str(heir.id) if heir else "-", f.designated_heir if f else -1, c.upbringing, str(c.leanings)]
 	if signature != char_signature:
 		char_signature = signature
 		_rebuild_character(c, rel, heir, mine, alive)
@@ -2823,6 +3163,8 @@ func _refresh_character():
 		char_relations.meta_clicked.connect(_on_link_clicked)
 	# Record
 	var record = ["Ventures led %d · triumphs %d · wounds %d" % [c.ventures_led, c.triumphs, c.wounds]]
+	if c.is_adult() and c.upbringing != "":
+		record.append("Raised: %s" % city.upbringing_label(c))
 	if c.is_leader:
 		var until = c.death_day if c.death_day >= 0 else city.day
 		record.append("Leader for %d days" % (until - c.ruling_since))
@@ -2846,8 +3188,25 @@ func _rebuild_character(c: Character, rel: Dictionary, heir: Character, mine: bo
 	for t in c.traits:
 		var def = GameData.character_trait(t)
 		var colours = TRAIT_COLORS.get(def["kind"], TRAIT_COLORS["personality"])
-		var kind = {"personality": "Nature", "earned": "Earned", "ruling": "Earned as leader"}.get(def["kind"], "")
+		var kind = {"personality": "Nature", "earned": "Earned", "ruling": "Earned as leader", "upbringing": "From their upbringing"}.get(def["kind"], "")
 		char_traits.add_child(_chip_label(def["label"], colours[0], colours[1], "%s (%s)\n%s" % [def["label"], kind, def["description"]]))
+	# A child: how they're being raised, and the traits emerging (each may settle at 16)
+	if c.death_day < 0 and not c.is_adult():
+		var raised = city.upbringing_label(c)
+		if raised == "":
+			char_traits.add_child(_chip_label("Upbringing at %d" % GameData.rule("schooling_age"), Color(0.16, 0.18, 0.21), Color(0.3, 0.33, 0.37),
+				"At %d you choose who raises them: a School, a tutor from the council or hired, or the parents. It shapes their skills and the traits they settle into at 16." % GameData.rule("schooling_age")))
+		else:
+			char_traits.add_child(_chip_label(raised, TRAIT_COLORS["upbringing"][0], TRAIT_COLORS["upbringing"][1],
+				"%s\nEach birthday their skills rise, fastest in what they're taught, and their leanings grow. Childhood events push them further. At 16 the leanings settle into traits.\n\nRight-click %s's portrait to change it (at most once a year). What they've learned so far stays." % [raised, c.name.get_slice(" ", 0)]))
+		var leaning_ids = c.leanings.keys().filter(func(t): return c.leanings[t] >= GameData.rule("leaning_shown"))
+		leaning_ids.sort_custom(func(a, b): return c.leanings[a] > c.leanings[b])
+		for t in leaning_ids:
+			var def = GameData.character_trait(t)
+			var chance = city.settle_chance(c, t)
+			char_traits.add_child(_chip_label("%s %d%%" % [def["label"], chance * 100], Color(0.13, 0.14, 0.17), Color(0.35, 0.38, 0.45),
+				"Emerging: %s (leaning %.1f)\n%d%% chance it settles at 16 (%d%% per point, at most %d%%).\n%s" % [def["label"], c.leanings[t], chance * 100,
+				GameData.rule("leaning_settle_per_point") * 100, GameData.rule("leaning_settle_max") * 100, def["description"]]))
 	# Spouse and heir: top right, and nowhere else as separate entries
 	for child in char_relatives.get_children():
 		child.queue_free()
@@ -3009,6 +3368,10 @@ func _refresh_district_info():
 	district_title.tooltip_text = "%s, %s\n%s" % [place["label"], d.borough, place["description"]]
 	var status = "Unclaimed" if owner == "" else "%s by %s" % [d.get_control_status().capitalize(), "you" if mine else city.faction_name(owner)]
 	var line = "[color=#999999]%s · %s ·[/color] %s" % [place["label"], d.borough, status]
+	# Held by a house inside its faction (doc 16)
+	if d.house_id >= 0 and owner != "":
+		var h = city.house(d.house_id)
+		line += "\n[color=#c9b07a]Held by House %s (keeps %d%% of its income, loyalty %d)[/color]" % [h.get("name", "?"), GameData.rule("house_income_share") * 100, city.house_loyalty(d.house_id)]
 	if not known:
 		line += "\n[color=#ffb347]Unscouted: salvage, danger and people unknown. Scout it first.[/color]"
 	if not city.can_reach(p.id, d):
@@ -3050,17 +3413,23 @@ func _refresh_district_info():
 			food, food - d.food_yield - from_buildings, d.food_yield, GameData.rule("food_source_cap"), from_buildings])
 		var growth = city.district_growth_food(d)
 		var income = city.district_income(d)
-		_stat("manpower", true, "Manpower %+.2f" % income["recruits"], "New manpower each day: %+.3f\nGrown from %.2f food (this district's own%s), more in rebuilt districts; less when restless." % [
-			income["recruits"], growth, " plus a share of your land next door" if growth > food + 0.001 else ""])
+		var to_garrison = d.garrison < city.garrison_ceiling(d) - 0.05
+		_stat("manpower", true, ("Manpower %+.2f" % income["recruits"]) + (" → garrison" if to_garrison else ""), "New manpower each day: %+.3f\nGrown from %.2f food (this district's own%s), more in rebuilt districts; less when restless.%s" % [
+			income["recruits"], growth, " plus a share of your land next door" if growth > food + 0.001 else "",
+			"\n\nThe garrison here isn't full, so these recruits go to it first and join your manpower once it is." if to_garrison else ""])
 	else:
 		_stat("food", false, "", "")
 		_stat("manpower", false, "", "")
 	if owner != "":
-		var parts = city.defence_factors(d).map(func(f): return "  x%.2f %s" % [f[1], f[0]])
+		# The garrison (doc 15): what the district's people put up against raids and assaults
 		var worth = city.raid_worth(d)
-		_stat("defence", true, "Defence %d%%" % (city.defence_total(d) * 100), "Attacks here succeed at %d%% of normal odds, and take longer.\n%s\n\nWorth raiding: %s (a raid takes x%.2f of the usual loot; more with development and working buildings)" % [city.defence_total(d) * 100,
-			"\n".join(parts) if parts.size() > 0 else "  Undefended: raise control, arms, a Watchtower, or Reinforce.",
-			"low" if worth < 0.8 else ("high" if worth >= 1.2 else "medium"), worth])
+		var ceiling = city.garrison_ceiling(d)
+		var assault = city.defence_force(d, "assault")
+		var parts = assault["parts"].map(func(x): return "  %s" % x[0] if x[0].begins_with("Garrison") or x[0].ends_with("posted") else "  x%.2f %s" % [x[1], x[0]])
+		var filling = "Full." if d.garrison >= ceiling - 0.05 else "Refilling: about %d days to full, faster while Safeguard the Shelter works here. Until then the district's recruits go to it before your manpower." % ceili((ceiling - d.garrison) / maxf(0.01, ceiling * GameData.rule("garrison_regen")))
+		_stat("defence", true, "Garrison %d/%d" % [roundi(d.garrison), roundi(ceiling)], "Garrison %.1f of %.1f: the fighters %s's own people put up, with nobody posted. The ceiling is %d%% of its people (%d).\n%s\n\nIts force against an assault: %d\n%s\nA raid slips past some of it (counts x%.1f). Attackers want to outnumber it; a raid or assault knocks it down, win or lose.\n\nWorth raiding: %s (a raid takes x%.2f of the usual loot; more with development and working buildings)" % [
+			d.garrison, ceiling, d.district_name, GameData.rule("garrison_per_pop") * 100, d.population, filling, roundi(assault["value"]), "\n".join(parts),
+			GameData.venture("raid")["force"]["defence_weight"], "low" if worth < 0.8 else ("high" if worth >= 1.2 else "medium"), worth])
 	else:
 		_stat("defence", false, "", "")
 	var safe_days = d.raid_safe_until - city.day
@@ -3082,6 +3451,10 @@ func _refresh_district_info():
 	else:
 		_stat("buildings", false, "", "")
 
+# Reasons a venture can't be launched that mean "not here at all", as opposed to "not yet"
+const WRONG_PLACE = ["Held by", "Too far", "Only", "Already yours", "Not on your border", "Trade happens",
+	"No faction you're at war with", "Nothing left to salvage", "Already scouted"]
+
 func _refresh_venture_buttons():
 	var p = _player()
 	# A newly selected district starts on a venture you can actually launch there
@@ -3098,19 +3471,34 @@ func _refresh_venture_buttons():
 		var b: Button = venture_buttons[venture_id]
 		var err = _venture_error(venture_id)
 		var under_way = city.ventures.any(func(v): return v.faction_id == p.id and v.venture_id == venture_id and v.district == selected) or city.task_at(p.id, venture_id, selected) != null
-		b.visible = err == "" or under_way or (venture_id == hovered_venture and not err.begins_with("Held by") and not err.begins_with("Too far") and not err.begins_with("Only"))
+		# The venture last picked stays in view only where it could work once something is fixed (cost, crew,
+		# a free captain): not on the wrong kind of district, and never an attack or trade on your own land
+		var wrong_place = (def["target"] in ["enemy_border", "war_border", "raider_border", "market"] and selected.owner_id() == p.id) \
+			or WRONG_PLACE.any(func(prefix): return err.begins_with(prefix))
+		b.visible = err == "" or under_way or (venture_id == hovered_venture and not wrong_place)
 		if not b.visible:
 			unavailable.append("%s: %s" % [def["label"], err])
 			continue
-		# Shown with the best free captain and the usual crew; the planner below fine-tunes it
+		# Shown with the best free captain and the usual crew (a fight: the recommended crew, since force
+		# decides it); the planner below fine-tunes it
 		var target_id = city.venture_target(p.id, venture_id, selected)
 		var leader = city.best_leader(p.id, def["skill"])
-		var result = VentureSystem.compute_odds(venture_id, p, selected, city, target_id, leader)
+		var shown_crew = city.recommended_plan(p.id, venture_id, selected, leader)["crew"] if def.has("force") and target_id != "" else -1
+		var result = VentureSystem.compute_odds(venture_id, p, selected, city, target_id, leader, shown_crew)
 		var odds = result["odds"]
 		b.text = "%s  %d%%" % [def["label"], odds * 100]
+		# Safeguard at full control is still working on the danger: say so on the button
+		if venture_id == "safeguard" and selected.share(p.id) >= 95.0:
+			b.text = "Safeguard: lower danger  %d%%" % (odds * 100)
 		b.disabled = false
 		b.modulate = Color(1, 1, 1) if err == "" else Color(0.6, 0.6, 0.6)
-		b.tooltip_text = "%s\n\n%s" % [_wrap(def["description"]), err if err != "" else _odds_explainer(venture_id, selected, leader, -1, 0, result)]
+		b.tooltip_text = "%s\n\n%s" % [_wrap(def["description"]), err if err != "" else _odds_explainer(venture_id, selected, leader, shown_crew, 0, result)]
+	# The planner follows a venture that's shown here, never one left over from another district
+	if not venture_buttons[hovered_venture].visible:
+		for venture_id in venture_buttons:
+			if venture_buttons[venture_id].visible:
+				hovered_venture = venture_id
+				break
 	# Nothing to do here at all: say so, and hide the planner
 	nothing_here = venture_buttons.values().all(func(b): return not b.visible)
 	unavailable_chip.visible = unavailable.size() > 0
@@ -3239,12 +3627,14 @@ func _refresh_plan():
 			leader_select.select(index)
 		preferred_leader = -1
 	crew_slider.min_value = def["crew_range"][0]
-	crew_slider.max_value = def["crew_range"][1]
+	crew_slider.max_value = city.crew_max(p.id, hovered_venture)
 	for level in funding_select.item_count:
 		funding_select.set_item_text(level, "None" if level == 0 else "+%d wealth (+%d%%)" % [
 			def["funding_cost"] * level, level * GameData.rule("funding_odds_step") * 100])
-		# Funding you can't pay for can't be picked; fall back to the most you can afford
-		funding_select.set_item_disabled(level, level > 0 and not p.can_afford(city.venture_cost(hovered_venture, level)))
+		# Funding you can't pay for can't be picked; fall back to the most you can afford. Fights take none:
+		# force decides them, and wealth helps by buying arms
+		funding_select.set_item_disabled(level, level > 0 and (def.has("force") or not p.can_afford(city.venture_cost(hovered_venture, level))))
+	funding_select.tooltip_text = "Fights take no funding: force decides them. Wealth helps by buying arms (Economy window)." if def.has("force") else ""
 	if funding_select.is_item_disabled(funding_select.selected):
 		var best_level = 0
 		for level in funding_select.item_count:
@@ -3284,11 +3674,21 @@ func _refresh_plan():
 	tier_text.text = "[b]%d%%[/b]" % (result["odds"] * 100)
 	tier_text.tooltip_text = odds_tip
 	var days = city.venture_days(hovered_venture, leader, selected)
-	var cost = _cost_text(city.venture_cost(hovered_venture, funding))
+	# A standing task is charged its cheaper per-run price
+	var cost = _cost_text(city.venture_cost(hovered_venture, funding, city.is_task(p.id, hovered_venture, selected)))
+	# A fight uses up some of the arms its crew carry
+	var spent_arms = city.arms_used(p.id, hovered_venture, crew)
+	if spent_arms > 0:
+		cost += ", uses %d arms" % spent_arms
 	plan_title.text = "[b]%s[/b]" % def["label"]
+	if hovered_venture == "safeguard" and selected.owner_id() == p.id and selected.share(p.id) >= 95.0:
+		plan_title.text += "  [color=#999999](control full: now lowering the danger)[/color]"
 	var about = def["description"]
 	if hovered_venture == "rebuild" and selected.owner_id() == p.id:
 		about += "\n\n" + _rebuild_payoff(selected)
+	if hovered_venture == "safeguard" and selected.owner_id() == p.id and selected.share(p.id) >= 95.0:
+		about += "\n\nControl is full here, so these runs now lower the danger (now %s). When it's none, the district is Safe (+%d%% manpower) and the task ends by itself." % [
+			VentureSystem.danger_label(city.danger(selected)), (GameData.rule("payoff_safe_manpower") - 1.0) * 100]
 	if def.get("feeds_trait", "") != "":
 		about += "\n\nBuilds the %s trait." % def["feeds_trait"]
 	plan_title.tooltip_text = _wrap(about)
@@ -3336,7 +3736,17 @@ func _odds_explainer(venture_id: String, d: District, leader: Character, crew: i
 	var def = GameData.venture(venture_id)
 	var skill: String = def["skill"]
 	var neutral = int(GameData.rule("skill_neutral"))
-	var lines = ["%s: %d%% to succeed" % [def["label"], result["odds"] * 100], "", "Starts at %d%%, then:" % (result["base"] * 100)]
+	var lines = ["%s: %d%% to succeed" % [def["label"], result["odds"] * 100], ""]
+	var force: Dictionary = result.get("force", {})
+	if force.is_empty():
+		lines.append("Starts at %d%%, then:" % (result["base"] * 100))
+	else:
+		# A fight starts from the balance of force (doc 15)
+		lines.append("Your force %d against their %d (%.1f to 1): starts at %d%%" % [roundi(force["attack"]), roundi(force["defence"]), force["ratio"], result["base"] * 100])
+		lines.append("  Yours: " + ", ".join(force["attack_parts"].map(func(x): return x[0])))
+		lines.append("  Theirs: " + ", ".join(force["defence_parts"].map(func(x): return x[0] if x[1] >= 1.0 or x[0].begins_with("Garrison") else "%s (x%.1f)" % [x[0], x[1]])))
+		lines.append("  Even force is 50%%, 2 to 1 about 85%%; at %.1f to 1 or better, no disaster." % GameData.rule("force_no_disaster_ratio"))
+		lines.append("Then:")
 	for factor in result["factors"]:
 		var change = roundi((factor[1] - 1.0) * 100)
 		if change != 0:
@@ -3349,8 +3759,12 @@ func _odds_explainer(venture_id: String, d: District, leader: Character, crew: i
 		var could = city.possible_defenders(target_id) - city.defenders_at(target_id, d)
 		if could > 0:
 			lines.append("")
-			lines.append("Watch out: the %s could send up to %d defenders before you arrive (%+d%%, less if you bring a bigger crew)." % [
-				city.faction_name(target_id), could, roundi((city.guard_defence(could) - 1.0) * 100)])
+			if force.is_empty():
+				lines.append("Watch out: the %s could send up to %d defenders before you arrive (%+d%%, less if you bring a bigger crew)." % [
+					city.faction_name(target_id), could, roundi((city.guard_defence(could) - 1.0) * 100)])
+			else:
+				lines.append("Watch out: the %s could post up to %d guards before you arrive, adding to their force. The odds are settled when you land." % [
+					city.faction_name(target_id), could])
 	var tips = []
 	# The best captain you have for this, free or not
 	var current = leader.skills[skill] if leader else neutral
@@ -3367,15 +3781,26 @@ func _odds_explainer(venture_id: String, d: District, leader: Character, crew: i
 			if GameData.council_post(post)["skill"] == skill:
 				tips.append("Seat a %s (Council): someone good at %s helps every venture like this" % [GameData.council_post(post)["label"], skill.capitalize()])
 	var size = int(def["crew"]) if crew < 0 else crew
-	if size < int(def["crew_range"][1]) and (size - int(def["crew"])) * GameData.rule("crew_odds_step") < 0.35:
+	if not force.is_empty():
+		# The force levers first: how many more crew to reach 2 to 1, and arms for the unarmed
+		var wanted = size
+		while wanted < city.crew_max(p.id, venture_id) and city.attack_force(p.id, wanted, leader)["value"] < force["defence"] * 2.0:
+			wanted += 1
+		if wanted > size and city.attack_force(p.id, wanted, leader)["value"] >= force["defence"] * 2.0:
+			tips.insert(0, "Send %d more crew: 2 to 1, about %d%%" % [wanted - size, CityMap.force_odds(2.0) * 100])
+		elif force["ratio"] < 2.0:
+			tips.insert(0, "Not enough idle manpower to outnumber them 2 to 1 (you'd need about %d crew)" % ceili(force["defence"] * 2.0 / maxf(0.1, force["attack"] / size)))
+		if p.arms < size:
+			tips.append("Arms: %d of your crew go unarmed; each armed one counts +%d%% (buy arms in the Economy window, or Gather Weapons)" % [size - int(p.arms), GameData.rule("force_armed_bonus") * 100])
+	elif size < int(def["crew_range"][1]) and (size - int(def["crew"])) * GameData.rule("crew_odds_step") < 0.35:
 		tips.append("More crew: +%d%% for each one over %d (up to %d)" % [GameData.rule("crew_odds_step") * 100, def["crew"], def["crew_range"][1]])
-	if funding < int(GameData.rule("funding_levels")):
+	if funding < int(GameData.rule("funding_levels")) and force.is_empty():
 		tips.append("Extra funding: +%d%% a level (%d wealth each)" % [GameData.rule("funding_odds_step") * 100, def["funding_cost"]])
 	if venture_id != "scout" and not city.knows(p.id, d):
 		tips.append("Scout it first: going in blind costs %d%% and makes disaster likelier" % ((1.0 - GameData.rule("blind_odds")) * 100))
 	if venture_id != "safeguard" and d.owner_id() == p.id and city.danger(d) >= 0.05:
 		tips.append("Safeguard the Shelter here: it lowers the danger")
-	if def["skill"] == "command" and def.get("hostile", false) and p.arms < GameData.rule("arms_effect_cap"):
+	if force.is_empty() and def["skill"] == "command" and def.get("hostile", false) and p.arms < GameData.rule("arms_effect_cap"):
 		tips.append("Arms: +%.1f%% each (Gather Weapons)" % (GameData.rule("arms_odds_step") * 100))
 	if not tips.is_empty():
 		lines.append("")
@@ -3426,9 +3851,15 @@ func _refresh_buildings():
 	var building = []
 	for c in city.constructions_at(selected):
 		building.append("%s (%dd)" % [GameData.building(c.building_id)["label"], c.days_left])
-	var text = "Slots [b]%d/%d[/b]  ·  %s" % [built.size() + building.size(), city.building_slots(selected), ", ".join(built) if built.size() > 0 else "nothing built"]
+	var slots = city.building_slots(selected)
+	var text = "Slots [b]%d/%d[/b]  ·  %s" % [built.size() + building.size(), slots, ", ".join(built) if built.size() > 0 else "nothing built"]
 	if building.size() > 0:
 		text += "  ·  building: %s" % ", ".join(building)
+	# More than you could build: taken from someone with more slots here; they keep working, but nothing new fits
+	if built.size() > slots and selected.owner_id() == p.id:
+		text += "\n[color=#e3a86f]%d over your limit: built by the last owner, who had more slots here. They keep working; you can't add more.[/color]" % (built.size() - slots)
+	var parts = city.building_slot_parts(selected).map(func(x): return "  +%d %s" % [x[1], x[0]])
+	buildings_info.tooltip_text = "Building slots here: %d\n%s\nMore: rebuild it to 100%% development, Secure it (control 75), or complete the A City Again ambition (+1 in every Secured district)." % [slots, "\n".join(parts)] if selected.owner_id() != "" else ""
 	if selected.owner_id() != "" and not city.buildings_active(selected):
 		text += "\n[color=#e3876f]Not working: out of wealth or materials.[/color]"
 	if selected.owner_id() != p.id:
@@ -3457,9 +3888,10 @@ Where you can name an heir, passing over the natural heir costs loyalty: the nat
 	_explain("realm", "government", "How your crew is run. Each government has its own succession rule and its own way of breaking. Reforms unlock from how you've played and what you've achieved (ambitions); each costs something, unsettles your districts for a while, and locks further reform for 2 years. Councillors back or oppose each reform by their natures; under a Politburo, Oligarchy or Democracy they vote.")
 	_explain("realm", "dynasty", "Your house by generation, living and dead, the leaders who came before, and everyone you've lost. Click anyone to open them.")
 	_explain("realm", "territory", "Every district you hold. Click one to go there.")
+	_explain("realm", "houses", "Families inside your faction with land of their own. A house keeps %d%% of its districts' income, and its loyalty is its head's: a loyal house fights beside you when asked, a disloyal one warns you and may break away with its land. Houses come from absorbing a faction (Vassalize) and from granting a district to a grown family member or a loyal captain (right-click them). Marrying into a house binds it to you." % (GameData.rule("house_income_share") * 100))
 	_explain("diplomacy", "factions", "Everyone you've met: stance, treaties and war. Open a faction, or right-click their land on the map.")
 	_explain("diplomacy", "proposals", "Offers from other factions, waiting for your answer. They expire if you ignore them.")
-	_explain("diplomacy", "subjects", "Your vassals, and your patron if you have one. Vassals pay tribute and join your wars.")
+	_explain("diplomacy", "subjects", "Your tributaries, and your suzerain if you have one. Tributaries pay tribute in food, materials and wealth, make no diplomacy but trade, start no wars, and join your wars with half their force.")
 	_explain("diplomacy", "faction", "One faction: who leads them, how they see you and why, and what you can propose. Hover an action for its odds or why it's not possible.")
 	_explain("economy", "economy", "Where your food, materials and wealth come from and go, each day. Hover the resources in the top bar for the same, in short.")
 	_explain("economy", "traits", "Your faction's identity grows from what you do, and from your leader's nature. Hover a trait for what it gives and costs.")
@@ -3483,7 +3915,6 @@ func _open_character_menu(id: int, at: Vector2):
 			character_menu.set_item_disabled(item, true)
 			character_menu.set_item_tooltip(item, reason)
 	character_menu.add_separator(c.name)
-	add.call("Open character", func(): _show_character(c.id))
 	var alive = c.death_day < 0
 	var me = city.player_id
 	var f: Faction = city.factions.get(c.faction_id)
@@ -3496,6 +3927,9 @@ func _open_character_menu(id: int, at: Vector2):
 		add.call("Name as heir", func(): _designate(c.id), heir_reason)
 		var lead_reason = "Select a district first" if selected == null else ("Recovering from wounds" if c.is_wounded(city.day) else ("Out on a venture" if city.leader_busy(c) else ""))
 		add.call("Lead a venture here", func(): _lead_with(c.id), lead_reason)
+		# Found a house: grant them the district you have selected (doc 16)
+		var grant_reason = city.check_grant(me, c, selected)
+		add.call("Grant %s (found a house)" % (selected.district_name if selected else "a district"), func(): _grant_land(c.id), grant_reason)
 		for post in GameData.council()["posts"]:
 			if c.post != post:
 				var p_id = post
@@ -3504,6 +3938,8 @@ func _open_character_menu(id: int, at: Vector2):
 		if c.post != "":
 			add.call("Remove from the council", func(): city.remove_from_council(c.id); _refresh())
 		add.call("Dismiss from the crew", func(): _on_dismiss_pressed(c.id); _on_dismiss_pressed(c.id), "Out on a venture" if city.leader_busy(c) else "")
+	elif alive and c.faction_id == me and not c.is_adult():
+		add.call("Change upbringing", func(): _change_upbringing(c.id), city.check_upbringing_change(c))
 	elif alive and f and c.faction_id != me:
 		var fid = c.faction_id
 		add.call("Diplomacy with the %s" % f.display_name, func(): _open_faction_panel(fid))
@@ -3518,6 +3954,10 @@ func _open_character_menu(id: int, at: Vector2):
 				label += "  (%d%%)" % (Diplomacy.acceptance(city, action_id, me, fid)["chance"] * 100)
 			var a_id = action_id
 			add.call(label, func(): _on_diplomacy_pressed(a_id, fid), err)
+	# Left-click already opens the person; with nothing to do with them, right-click does the same
+	if character_menu_actions.is_empty():
+		_show_character(c.id)
+		return
 	character_menu.reset_size()
 	character_menu.position = Vector2i(at)
 	character_menu.popup()

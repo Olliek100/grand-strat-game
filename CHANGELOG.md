@@ -2,6 +2,150 @@
 
 What each build changed, its tuning numbers and simulation results, newest first. Design decisions that still stand are in Steering/04-decision-log.md. From v1.38 on, each build is a git tag.
 
+**2026-10-09 (v1.42, education, strength and war, houses and marriage)**
+
+Six parts, built and playtested one after another since v1.41 (details below, newest first):
+1. **Education** (doc 14 slice 2): who raises a child from 6, childhood events, traits settling at 16, Of the People and Born to Rule, the School; plus playtest fixes (tribute you can refuse, Reinforce by any captain when attacked, portrait right-click).
+2. **Strength over dice** (doc 15 P1): raids and assaults decided by the balance of force; garrisons in every district.
+3. **Fixes after playing P1:** pauses only when something needs you (with the reason by the clock), fights need manpower not arms, wealth buys materials and arms, peace you can see, cheaper standing tasks.
+4. **War goals and ultimatums** (doc 15 P2): no war without a justified goal (Claim a district, Subjugate, Vassalize) and a refused ultimatum; war score; tributaries; months to justify, no strength gate, raids speed it up, breaking a treaty costs your name.
+5. **Playtest answers on P2:** send an ultimatum early when strong enough, withdraw, ask others to back your claim; Safeguard and building slots explained; the player can't be absorbed.
+6. **Houses and marriage** (doc 16): matches for grown family, houses with land, loyalty, revolt and the call to arms, marriage between factions.
+
+- **Result (release run, 3 games x 4 years):** civil wars 0.7 a game (0-2); raids 11-20; claims 10-16 a game, 7-12 given in without a war; wars 3-5; cadet houses 3-8 a game; ambitions 18-23 and reforms 3-10 a game; nobody hungry, broke 2 days in all; factions left 2-4, largest faction 24-48; 37-48 ms a day.
+- **Open issues:**
+  - **Consolidation:** big factions still swallow neighbours in some games (2 factions left in one of three). Houses helped in earlier runs (3-6 left); the planned answer is coalitions against a runaway (spine S6).
+  - **Thin dynasties:** grown children of AI families often die leading ventures, and conquest wipes whole families; marriages and grandchildren are rarer than the spine wants.
+  - **Speed** can't be judged on this machine: the same code has timed 37 to 104 ms a day. Needs a proper profile.
+  - **Small factions** (Pale Riders, St Brigid's, Rust Dogs) still go hungry or broke in some games.
+  - One old test (a disloyal captain deserting) can fail on a rare unlucky seed.
+- Saves from v1.41 won't load (save version 16).
+
+**Part 6: houses and marriage (doc 16, H1-H3)**
+
+Built with the doc's recommended answers to its questions (the owner said "build it" without answering them): matches are a choice event; a house's districts stay yours and the house keeps 25% of their income; land can be granted to found a cadet house; a revolting house becomes a faction at war with you; claims through blood come later.
+
+- **H1, matches within the faction.** Until now only the leader ever married, so families thinned out instead of branching.
+  - **"A Match"** (a choice event; the game waits): a grown, unmarried family member is asked from 18, then every two years if "not yet". Options cost nothing: **marry a named captain or councillor** (they join the family; loyalty +15 for good; the children lean toward their skills and nature), **someone from the people** (Of the People; grievance falls a little faster for 180 days), **a house's son or daughter** (H2), or **not yet**. Widows are asked again. The AI answers its own.
+  - **A family has a limit of 16 living members** (no more pregnancies beyond it), so it branches without swelling for ever.
+  - **Finding on the way:** grown children of AI families often die leading ventures (three in two years in one test), and conquered factions take their families with them; both keep dynasties thin. Not changed.
+- **H2, houses.** A family inside your faction, not the ruling one, holding land of its own.
+  - **Where they come from:** **granting land** (right-click a grown family member, or a captain with loyalty 50+: "Grant [selected district] (found a house)"; not your home, and you keep at least one district for yourself), and **Vassalize** (the absorbed ruling family becomes a house holding the districts it had).
+  - **What it means:** the district is still yours on the map, but the **house keeps 25% of its food, materials and wealth**; the district panel says "Held by House X". **Its loyalty is its head's** (the eldest grown member), with reasons: granted land (+15), a match with your family (+20), fought beside you (+5), lost its land in your wars (-10).
+  - **Revolt, telegraphed:** a house whose loyalty falls below 20 is "restless" (you're told, with what would win it back); if it stays there two months it may **break away with its districts and people**, at war with you (the civil-war split).
+  - **Call to arms** (Realm, new Houses tab, "Ask to fight", once every 180 days while at war): it may decline (likelier the less loyal); if it agrees, fighters from its districts' garrisons join your manpower.
+  - **House heads can contest a succession**, their claim growing with the land they hold.
+  - **The AI founds cadet houses too** (one per five districts, for a family member who isn't its heir) and calls its houses to its wars.
+- **H3, marriage between factions:** **"Propose a match: Luc and Col"** on a faction's card (20 wealth, 10 days) pairs your best unmarried grown family member with one of theirs (family or a house), who joins your family. While both live, **each side thinks better of the other (+20, "Bound by marriage")**, pacts, alliances and backing a claim come easier (x1.3), and **pressing a claim on them breaks your word** (the -30 oathbreaker penalty). The AI proposes matches to factions it likes.
+- **Result (3 games x 4 years, H2 then H3):** cadet houses 2-9 a game, calls to arms 10-15, no house revolts yet in 4 years (granted houses start grateful); factions left 3-6, largest 20-40 (was 26-50 before houses); civil wars 0-1. Cross-faction marriages are rare (1 in 3 games): few grown family members are unmarried for long. A 10-year look: marriages and grandchildren do happen, but conquest still wipes whole families.
+- Saves from earlier builds won't load (save version 16).
+
+**Part 5: playtest answers on top of P2**
+
+- **Playtest: "even with control at 100% I can still action Safeguard the Shelter, why?"** Since v1.41 it keeps going until the danger is gone too (then the district is Safe: +20% manpower). Now said on screen: at full control the button reads "Safeguard: lower danger", the planner title adds "(control full: now lowering the danger)", and its hover gives the danger now and the payoff.
+- **Playtest: "a district I took had 4 buildings, but the cap is 3: how did the AI build 4?"** It wasn't a cheat: that AI had completed the A City Again ambition (+1 slot in every Secured district), which you don't have yet. Now the Build tab says when you hold more buildings than your slots ("1 over your limit: built by the last owner, who had more slots here. They keep working; you can't add more."), and its hover lists where each slot comes from (Secured 2, Rebuilt +1, A City Again +1).
+- **Bug fixed: the player's faction could be absorbed.** An AI winning a Vassalize war against the player removed the player's faction, which crashed the game (seen in a test on an unlucky seed). As with peaceful integration, the player is never absorbed: losing a Vassalize war makes you their tributary, and you play on.
+
+**Part 4: war goals and ultimatums (doc 15 P2)**
+
+- **Playtest:** "the Rust Dogs seemingly randomly declared war"; war should need a reason and a warning, with demands first and war last.
+- **No more declaring war.** The Diplomacy card's war button now only makes peace. Instead, **justify a war goal** on a neighbour's card:
+  - **Claim a district** (10 renown, 20 wealth; 30 days): one of their districts on your border (the one you have selected, or their most populous). Given in: it's yours at once. Refused: war, and taking it by assault wins.
+  - **Subjugate** (20 renown, 40 wealth; 60 days; they must be under 60% of your strength): they become your **tributary**.
+  - **Vassalize** (30 renown, 60 wealth; 90 days; under 40%): they're absorbed: their land, people and stores join you, and their ruling family comes too (no council seats, loyalty -20 at first).
+  - **A reason halves the wait and spares your name:** they raided you or demanded tribute in the last 90 days, or there's bad blood (opinion below -25 either way). Without one it takes twice as long and everyone thinks less of you. The target always thinks less of you (-20).
+- **The target is told at once:** an alert, a "Claim 28d" chip in the top bar, the Claims section of the outliner, and a line on both Diplomacy cards, each with the goal, the reason and the days left.
+- **The ultimatum:** when the claim is justified, the target gets 15 days. The player gets a pop-up (the game waits) and an entry in Proposals: "Give in" or "Refuse: war", with the terms and both sides' strength. Silence counts as refusal. The AI gives in more readily the more you outweigh it and its friends, and less the harsher the goal (the card's hover shows the chance).
+- **A war over a goal ends when:**
+  - the claimant's **war score** reaches the goal's price (claim 40, subjugate 70, vassalize 100) and it takes its terms ("Enforce" on the card), or for Vassalize when their home district is taken;
+  - for a claim, the claimed district is taken by assault;
+  - **a side is worn out (weariness 100): it loses.** A claimant worn out first pays up to 40 wealth and can't press a claim on them for 2 years;
+  - a white peace (the goal lapses), or the defender gives in ("Give in to their terms").
+  - **War score** (shown on the card and in the outliner): +10 an assault won, -5 lost, +3 a raid, +15 a district taken (+30 the claimed one), plus half the gap in weariness.
+- **Tributaries** (today's vassals, renamed to your words): they pay their suzerain 20% of their food, **materials** and wealth, make **no diplomacy but trade**, start no wars, and join their suzerain's wars with **half their force** (their assaults can take at most half their manpower). "Demand vassalage" is now "Demand submission"; "Integrate vassal" is "Vassalize tributary".
+- **The AI does the same, in the open:** it picks the harshest goal the strength gap allows, justifies it (one claim at a time), enforces its terms once the war score allows, and answers ultimatums by the odds. Its card shows "PRESSING A CLAIM" with the goal and the days to the ultimatum. Civil wars and allies joining in have no goal (as before).
+- **Not as doc 15 wrote it:** the ultimatum goes out by itself when the justification ends; "they hold land you held within 2 years" isn't a reason yet (nothing records it); a civil war still has no goal.
+- **Result (3 games x 4 years):** claims 7-11 a game, 3-6 of them given in with no war; wars 5-6 a game (was 7-12); goals won in war 3-4, failed 0-1; civil wars 0.7 a game; largest faction 31-34, factions left 4-5; nobody broke, little hunger. **Speed: unreadable on this machine** (the same code timed 37 to 86 ms a day back to back); needs a proper profile.
+- Saves from earlier builds won't load (save version 14).
+- **Owner's changes after reading it (same build):** "30 days, 15 days is too fast: a few real seconds"; "a weak faction raided by a strong one has no recourse"; "nothing should stop any faction justifying war, except treaties, and breaking those should cost your name for years".
+  - **Justifying takes months:** claim 180 days with a reason (about 1.5 minutes at speed 2), subjugate 270, vassalize 360; half as long again without one. **The ultimatum gives 60 days** to answer.
+  - **Each raid by the side you're claiming against brings your ultimatum 30 days sooner** (you're told).
+  - **No strength gate:** any faction can justify any goal against a neighbour; the war decides. (The AI still only presses the harsher goals when it has the gap.) The cost halves when you have a reason, so a raided faction can afford its recourse.
+  - **Treaties and truces don't stop a claim,** but breaking one to press it costs **-30 opinion with every faction**, fading over about four years ("Broke a treaty or truce to press a claim"). The card's hover warns you first.
+  - **Allies count:** the claimant's allies now join its war too, and the chance an ultimatum is accepted weighs both sides with their friends (allies in full, tributaries at half).
+  - **The AI uses the recourse:** a faction raided by a raider gang presses a district claim on it when it and its friends have at least 70% of the raiders' strength.
+  - The two-year ban after a failed claim is gone (losing still costs up to 40 wealth).
+  - **Result (3 games x 4 years):** claims 6-11 a game, 2-4 given in; wars 5-7; goals won 2 a game; civil wars 1.0; largest faction 25-47, factions left 3-5; nobody broke or hungry. **Watch:** raids up to 34-65 a game (was 19-33): the longer waits leave longer peace, and raiders fill it.
+- **Playtest: "I can't interact with my claim or ask others to support me."** A claim under way could only be waited on. Now (Diplomacy card and outliner):
+  - **"They'd give in now: N%"** on your claim the whole time, with the strength of both sides (friends and backers counted).
+  - **Send ultimatum now:** available before the claim is fully justified once your side is strong enough that they'd likely give in (1.5x their side for a claim, 2.5x for subjugate, 3.5x for vassalize). Until then it says how strong you are ("you're 2.1x"), and the outliner marks "(can send now)" when it is.
+  - **Withdraw claim:** drop it before any war (what you paid is gone).
+  - **Ask them to back your claim** (15 wealth, an envoy of 8 days): appears on other factions' cards while you're pressing a claim. Likelier if they like you, dislike your target, or are your ally. A backer counts toward your side's strength (better odds they give in, an earlier ultimatum) and **joins the war** if the ultimatum is refused. The AI asks for backing when its claim looks unlikely to be accepted, and sends its ultimatum early when it can.
+  - **Giving in is capped by how much it costs them:** at most 90% for a district, 70% to become a tributary, 40% to be absorbed. (Without the cap, early ultimatums let strong factions absorb whole neighbours by threat: one test game ended with 58 of 61 districts in one faction.)
+  - **Result (3 games x 4 years):** claims 10-15 a game, 3-11 given in, backings 10-17, wars 4-8; civil wars 0.3 a game; largest faction 26-50, factions left 2-4. **Watch:** consolidation is up (one game ended with 2 factions); the planned answer is coalitions against a runaway (spine S6). Small factions still go hungry in some games.
+
+**Part 3: fixes after the P1 playtest (pauses, dead ends, peace)**
+
+- **Playtest:** "the clock keeps auto-pausing without notifying me, every 2-3 days"; "by year 3 I was wiped: 0 materials, so I couldn't act" (with 676 wealth, 50 manpower and 0 arms); "raids cost 30 wealth"; a war with St Brigid's ran 474 days at weariness 100.
+- **Pausing:** every log *alert* paused the game, and a waiting task posted a fresh alert each time its reason changed ("have 8 of 20", "have 9 of 20"...). Now:
+  - **A waiting task says so once**, as news; the outliner keeps the reason current.
+  - **News no longer pauses:** a faction gaining a trait, a promise voided, a trade deal collapsing, a refused demand, a leader lost on a venture.
+  - **When the game pauses itself, the reason shows beside the clock** ("Paused: WAR! The Rust Dogs have declared war..."; hover for all of it) until you play on.
+- **Fights need manpower, not arms.** Raids and assaults no longer cost arms; unarmed crew just count for less (each armed one +50%). A fight uses up about a quarter of the arms its crew carried, when it lands. The launch button shows it ("8 food, uses 3 arms").
+- **No funding on raids and assaults:** paying wealth for a flat +10/20% was money for better dice. Wealth now helps a fight by buying arms. Other ventures keep funding.
+- **Wealth buys materials and arms at once** (Economy window: "5 for 13 wealth", "20 for 60 wealth"): 2.5 wealth a material, 4 an arm, each one bought raising the price 2% for a while, easing back 3% a day. The "Materials" and "No arms" alerts open it. **The AI buys the same way** when it's short of materials, or of arms while at war or next to raiders, keeping 60 wealth back.
+- **Peace you can see:** the outliner's war line says "they'd accept peace now" (or why not), and you're told once per war when they would.
+- **Fixed on the way:** two more flaky tests (a newborn can have no particular nature; the births test used the leader's couple, whose death risk sometimes ended it early).
+- **Result (3 games x 4 years):** raids 12-33, wars 7-12 (was 6-7 with the P1 fixes), civil wars 0-3 a game (1.3 on average, over the 0-1 target in one game), largest faction 29-49, broke 75 days (St Brigid's, one game), hungry 9-24 days for most, but the stand-in player starved 147 days and was wiped in one game. Speed 39-44 ms a day. **Watch:** wars and civil wars up a little now that a faction without arms can still fight; small factions and the simple stand-in player still struggle.
+- Saves from earlier builds won't load (save version 13).
+
+**Part 2: strength over dice (doc 15 P1)**
+
+- **Playtest:** "the game is still running on gambling, not the strength of a faction"; "even at 82% I can face a Disaster that opens my territory"; "defence doesn't grow unless I keep launching Safeguard".
+- **Raids and assaults are decided by force.** Your force (the crew you send, how many of them carry arms, the leader's Command) against the district's (its garrison, any guards posted, their arms, control, a Watchtower, the defenders' traits). **Even force is 50%, 1.5 to 1 about 73%, 2 to 1 about 85%, 3 to 1 about 95%**, then the usual adjustments (faction traits, the leader's nature, the council, danger, scouting). A raid slips past part of the defence (it counts x0.6).
+  - **No Disaster when you outnumber them 1.5 to 1.** Below that, the more you're outnumbered, the likelier a Disaster and the worse it goes (losses scale with the gap). A Disaster costs crew and exhaustion, never land.
+  - **A close win still costs lives;** an overwhelming one almost none.
+  - **Assaults can take all your idle manpower** (a trial; was at most 12).
+  - **The planner leads with the force:** "Your force 24 against their 15 (1.6 to 1): starts at 76%", what makes up each side, and "Send 6 more crew: 2 to 1, about 85%". The Raid and Assault buttons show the odds at the recommended crew.
+- **Garrisons:** every district you hold puts up a fight with nobody posted. Its ceiling is 8% of its people; it refills about 1% of the ceiling a day (3 times as fast while Safeguard the Shelter works there), and **the district's recruits go to it before they join your manpower**. A raid or assault knocks it down (by half if it succeeds, 15% if not); a district taken starts with none. Shown as "Garrison 6/6" on the district panel (hover: the force against an assault, and how long until it's full) and in the Realm's territory list. Homes start full.
+- **Reinforce and the Watchtower** now add to the district's force: guards count on top of the garrison, a Watchtower makes the defenders count x1.25. Agitation is unchanged.
+- **The AI** sizes its raids and assaults to outnumber the defence 2 to 1, and won't attack while outnumbered.
+- **Not as doc 15 wrote it:** you don't pick how many arms a venture carries; your crew are armed from your stock (one arm each, as far as it goes). Control strengthens the garrison rather than enlarging it.
+- **Playtest bug:** at war, Assault showed on the player's own Station Road at 98%. The district panel kept showing the venture you last picked (Assault, from an enemy district) wherever its reason wasn't one of three it knew; with no enemy there, the odds fell back to the old formula. Now a carried-over venture stays in view only where it could work once something's fixed (cost, crew, a captain); attacks and trade never show on your own land; and the planner always follows a venture that's shown.
+- **Playtest bug:** at war, Assault was offered on Memorial Park, which the player had just taken, because the enemy kept a 20%+ share there. Assault now only targets land the enemy holds; pushing their leftover share out of your own district is Safeguard the Shelter's work (the reason says so).
+- **Playtest bug: Rebuild emptied the stores.** Each run cost 20 materials every 12 days, so four councillors rebuilding spent about 6-7 materials a day against an income of +0.1, and nothing else could be launched. A stopgap ahead of P3 (owner's decision: passive work costs far less than its one-off version):
+  - **A standing task's run costs half** its one-off price (Rebuild: 10 materials and 2 food a run). The Assign button shows the task price.
+  - **Tasks keep 20 materials in reserve** for your own plans: a run waits ("Keeping 20 materials in reserve...") rather than spend below it.
+  - Result (3 games x 4 years): nobody went broke; hungry days down to about 70 in all (Pale Riders 28, the Guild 20); largest faction 23-30; civil wars 0.7 a game; raids 14-19, wars 6-7. Speed read 70-94 ms a day this time, against 32-38 an hour earlier on nearly the same code: the machine's speed swings, which makes the budget hard to judge until it's measured properly.
+- **Fixed on the way:** two flaky tests (a widowed leader at the start left no couple for the births test; the education trait checks were too close to their expected value).
+- **Result (6 games x 4 years, two batches):** civil wars 0-1 a game; raids 11-34 a game (was 32-60), wars 5-9 (was 3-6), wounds down a little; largest faction 27-53 districts (was 34-46; one game in six ran away to 53, within the old spread's reach), factions left 2-4; first expansion 41-83 days for the big factions; AI manpower at year four about as before (up to 440). **Watch:** small factions still go hungry (Pale Riders, St Brigid's, Rust Dogs, as before this build), and once the Rival (224 days). **Speed: 32-38 ms a day**, under the 40 limit, over the 30 budget (the earlier 75-82 looks like the machine).
+- Saves from earlier builds won't load (save version 12).
+
+**Part 1: education (doc 14 slice 2) and playtest fixes**
+
+- **Who raises the child** (a choice event when a family child turns 6; the game waits for your answer). Each option costs nothing up front, and its effect is written under its button:
+  - **Send them to school** (needs a **School** in your land): Diplomacy and Stewardship grow fastest; leans toward the new **Of the People** trait. Grievance -0.02 a day for 90 days.
+  - **A tutor from the council** (your ablest councillor, named on the button): their best skill grows fastest; leans toward the new **Born to Rule** trait and the tutor's own nature (a cruel tutor makes a crueller child). That councillor's kind of venture is -5% for a year while they teach.
+  - **Hire a tutor** (teaches one skill, named on the button): that skill grows fastest; leans Born to Rule. Wealth income -15% for a year.
+  - **Leave it to the parents:** the parents' best skills grow; leans toward the parents' natures.
+- **Changing an upbringing** (playtest: "raised by the parents, but clicking it does nothing"). Right-click a child aged 6-15 and pick "Change upbringing" to reopen the same choice, with "Keep things as they are" to back out. What they've learned so far stays; the new upbringing shapes the years left. At most once a year. A council tutor you take off the job loses 10 loyalty. Children who were already 6-15 when the game starts can be changed on day 1. The chip's tooltip says how.
+- **Growing up:** each birthday from 7 to 16, skills rise (fastest in what they're taught) and leanings grow. About one year in three brings a **childhood event** that fits the upbringing (a schoolyard bully, a harsh tutor, friends from the shelters, a stray dog... 7 in all). Its options nudge the child's leanings and skills.
+- **A child is born with a nature, not traits:** what they're born with is only a leaning (about a 1 in 3 chance it sticks) until it settles.
+- **The child's card shows it all:** how they're being raised ("Tutored by Bram Bauer (Command)"), their skills as they rise, and each emerging trait with its chance of settling at 16 ("Born to Rule 27%"). Hover for why.
+- **At 16 the leanings settle into traits:** stronger leanings are likelier (8% per point, at most 80%), up to 3 traits, never both sides of a pair. The log says what they became. Adults' Record tab says how they were raised.
+- **New traits:** **Of the People** (+5% Diplomacy and Stewardship ventures; as heir, a contested succession is 30% less likely; as leader, everyone's loyalty +3). **Born to Rule** (+10% on their best skill's ventures, +10 claim as heir, -10 loyalty unless on the council). They're opposites.
+- **School** building: 20 materials and 20 wealth, 20 days, upkeep 0.06 wealth a day. Grievance falls a little faster there. The AI builds it too.
+- **The AI raises its own children** by the same options and weights (it can't pick school without a School, or a council tutor without a councillor).
+- **What a grown child looks like** (200 children per upbringing): best skill about 6 (4.8 raised by the parents), 1-2 traits once childhood events are counted. The upbringing's own trait settles about 65% of the time (school: Of the People; tutors: Born to Rule).
+- **Result (3 games x 4 years):** civil wars 0-1 a game; largest faction 34-46 districts; first expansion 43-61 days for the big factions. **Watch:** the Pale Riders are again hungry (110 days) or broke (124 days) in two of three games; the Guild was hungry 29 days in one. **Speed: 75-82 ms a day, over the 40 limit, but v1.41 measured back to back on the same machine gives 74-79**, so the slowness was already there (or is the machine), not this build. Needs looking into separately.
+- Saves from v1.41 won't load (save version 11).
+
+- **Playtest:** "the Rust Dogs can raid me but I can't raid them: 'you promised no raids', which I never chose."
+  - **Tribute offered to you is now a proposal** (Diplomacy, Proposals): "Accept 12 food" or Decline. Before, it was taken automatically and bound you. Declining costs a little of their opinion and binds nothing.
+  - **Attacking whoever promised to spare you voids the promise** (raid, assault, agitation...). If a faction pays you off and then raids you, you're free to raid back at once; the log says so. AI factions don't raid someone they've paid off.
+- **Playtest:** "I can't Reinforce in time when they raid." Standing guard needed a free councillor, often there wasn't one. **Now, when a raid or assault is already on its way to a district, any free captain can lead a one-off Reinforce there** (guards count against the attack the moment they arrive). Guarding a quiet border is still a councillor's task.
+- **Right-click on a portrait** no longer has "Open character" (left-click does that). With nothing to do with the person, right-click opens them.
+
 **2026-09-29 (v1.41, district payoffs; choice events and births: doc 14 slice 1)**
 
 - **Choice events** (data/events.json, 12 to start). A pop-up with 2-4 options that **cost nothing**: each gives a timed buff or debuff to one part of the game (food, scavenging, trade, treaty odds, defence, manpower limit, grievance, the heir's claim, split chance, or a kind of venture), written out under its button ("Food -10%, grievance a day -0.02, for 30 days"). The game waits for your answer.

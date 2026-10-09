@@ -34,10 +34,20 @@ static func compute_odds(venture_id: String, faction: Faction, district: Distric
 	_add_building_factors(factors, venture_id, def, faction, district, city, target_id)
 	var skill_name: String = def["skill"]
 	var skill = int(GameData.rule("skill_neutral"))
+	var size = int(def["crew"]) if crew < 0 else crew
+	# Raids and assaults (doc 15): the balance of force sets where the chance starts. The crew, their
+	# arms and the leader's Command are the attack; the garrison, guards, arms, walls and control the defence
+	var force = {}
+	if def.has("force") and target_id != "":
+		var attack = city.attack_force(faction.id, size, leader)
+		var defence = city.defence_force(district, venture_id)
+		force = {"attack": attack["value"], "defence": defence["value"], "ratio": attack["value"] / defence["value"],
+			"attack_parts": attack["parts"], "defence_parts": defence["parts"]}
 	if leader:
 		skill = int(leader.skills[skill_name])
-		factors.append(["Led by %s (%s %d)" % [leader.name, skill_name.capitalize(), skill],
-			1.0 + (skill - GameData.rule("skill_neutral")) * GameData.rule("skill_odds_step")])
+		if force.is_empty():
+			factors.append(["Led by %s (%s %d)" % [leader.name, skill_name.capitalize(), skill],
+				1.0 + (skill - GameData.rule("skill_neutral")) * GameData.rule("skill_odds_step")])
 		factors.append_array(leader.trait_factors(skill_name))
 	var council_factor = city.council_factor(faction.id, skill_name)
 	if council_factor.size() > 0:
@@ -45,21 +55,20 @@ static func compute_odds(venture_id: String, faction: Faction, district: Distric
 	var leader_bonus = city.leader_factor(faction.id, skill_name)
 	if leader_bonus.size() > 0:
 		factors.append(leader_bonus)
-	# Arms: your weapons strengthen attacks; the target's weapons strengthen their defence
-	var arms_cap: float = GameData.rule("arms_effect_cap")
-	if skill_name == "command" and def.get("hostile", false) and faction.arms >= 1.0:
-		factors.append(["Armed (%d arms)" % faction.arms, 1.0 + minf(faction.arms, arms_cap) * GameData.rule("arms_odds_step")])
-	var target: Faction = city.factions.get(target_id)
-	if def.get("hostile", false) and target and target.arms >= 1.0:
-		factors.append(["Defenders armed (%d arms)" % target.arms, 1.0 - minf(target.arms, arms_cap) * GameData.rule("arms_defence_step")])
-	# Against defenders on guard, what counts is how many you bring compared with them: overwhelming
-	# force can make an attack nearly certain. Otherwise more hands help, up to a point.
-	var size = int(def["crew"]) if crew < 0 else crew
-	var guards = city.defenders_at(target_id, district) if def.get("hostile", false) and target_id != "" else 0
-	if guards > 0:
-		factors.append(["Your crew of %d against %d defenders" % [size, guards], clampf(0.8 + 0.2 * float(size) / guards, 0.8, GameData.rule("outnumber_max"))])
-	elif crew >= 0 and crew != int(def["crew"]):
-		factors.append(["Crew of %d" % crew, clampf(1.0 + (crew - int(def["crew"])) * GameData.rule("crew_odds_step"), 0.7, 1.35)])
+	# Everything else hostile (agitation): arms, guards and crew as adjustments; for force ventures they're in the force
+	if force.is_empty():
+		var arms_cap: float = GameData.rule("arms_effect_cap")
+		if skill_name == "command" and def.get("hostile", false) and faction.arms >= 1.0:
+			factors.append(["Armed (%d arms)" % faction.arms, 1.0 + minf(faction.arms, arms_cap) * GameData.rule("arms_odds_step")])
+		var target: Faction = city.factions.get(target_id)
+		if def.get("hostile", false) and target and target.arms >= 1.0:
+			factors.append(["Defenders armed (%d arms)" % target.arms, 1.0 - minf(target.arms, arms_cap) * GameData.rule("arms_defence_step")])
+		# Against defenders on guard, what counts is how many you bring compared with them. Otherwise more hands help, up to a point.
+		var guards = city.defenders_at(target_id, district) if def.get("hostile", false) and target_id != "" else 0
+		if guards > 0:
+			factors.append(["Your crew of %d against %d defenders" % [size, guards], clampf(0.8 + 0.2 * float(size) / guards, 0.8, GameData.rule("outnumber_max"))])
+		elif crew >= 0 and crew != int(def["crew"]):
+			factors.append(["Crew of %d" % crew, clampf(1.0 + (crew - int(def["crew"])) * GameData.rule("crew_odds_step"), 0.7, 1.35)])
 	if funding > 0:
 		factors.append(["Extra funding x%d" % funding, 1.0 + funding * GameData.rule("funding_odds_step")])
 	# Danger: known if you hold or have scouted the district; otherwise you go in blind.
@@ -73,7 +82,8 @@ static func compute_odds(venture_id: String, faction: Faction, district: Distric
 		else:
 			factors.append(["Unscouted: going in blind", GameData.rule("blind_odds")])
 			extra_disaster = GameData.rule("blind_disaster_share")
-	var odds: float = def["base_success"]
+	var base: float = def["base_success"] if force.is_empty() else CityMap.force_odds(force["ratio"])
+	var odds: float = base
 	for factor in factors:
 		odds *= factor[1]
 	odds = clampf(odds, MIN_ODDS, MAX_ODDS)
@@ -82,13 +92,18 @@ static func compute_odds(venture_id: String, faction: Faction, district: Distric
 	var triumph_share = clampf(GameData.rule("triumph_share_base") + skill * GameData.rule("triumph_share_per_skill")
 		+ (leader.triumph_bonus() if leader else 0.0) + maxf(0.0, odds - 0.5) * GameData.rule("triumph_share_per_odds"), 0.05, 0.6)
 	var disaster_share = clampf(GameData.rule("disaster_share_base") + def["danger"] + extra_disaster - skill * GameData.rule("disaster_share_per_skill"), 0.03, 0.7)
+	# In a fight, disaster comes from being outnumbered, and never when you outnumber them 1.5 to 1
+	if not force.is_empty():
+		disaster_share = clampf((GameData.rule("force_no_disaster_ratio") - force["ratio"]) * GameData.rule("force_disaster_step") + extra_disaster, 0.0, 0.5)
+		if force["ratio"] >= GameData.rule("force_no_disaster_ratio"):
+			disaster_share = 0.0
 	if odds >= GameData.rule("no_disaster_odds"):
 		disaster_share = 0.0
 	var tiers = {
 		"triumph": odds * triumph_share, "success": odds * (1.0 - triumph_share),
 		"setback": (1.0 - odds) * (1.0 - disaster_share), "disaster": (1.0 - odds) * disaster_share,
 	}
-	return {"odds": odds, "base": def["base_success"], "factors": factors, "tiers": tiers}
+	return {"odds": odds, "base": base, "factors": factors, "tiers": tiers, "force": force}
 
 # Picks an outcome tier and, for a success, how cleanly it went: {"tier", "quality"}. Quality runs from
 # x0.8 (only just made it) to x1.2 (a clean job) and scales what the success gains
@@ -173,7 +188,8 @@ static func _add_building_factors(factors: Array, venture_id: String, def: Dicti
 		var building = GameData.building(building_id)
 		if owner == faction.id and building.get("venture_odds", {}).has(venture_id):
 			factors.append([building["label"], building["venture_odds"][venture_id]])
-		if def.get("hostile", false) and owner == target_id and building["effects"].has("defence_mult"):
+		# (raids and assaults count walls in the defence force instead)
+		if def.get("hostile", false) and not def.has("force") and owner == target_id and building["effects"].has("defence_mult"):
 			factors.append(["Defended by %s" % building["label"], building["effects"]["defence_mult"]])
 
 # Applies a list of effects from venture data. `quality` (x0.8 to x1.2, from how cleanly a success went)

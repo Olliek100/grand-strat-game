@@ -27,6 +27,9 @@ static func opinion_baseline(city: CityMap, holder_id: String, about_id: String)
 	var r = city.relation(holder_id, about_id)
 	if r.trade:
 		parts.append(["Trade partners", 10.0])
+	# A living marriage between the families (doc 16)
+	if city.marriage_tie(holder_id, about_id):
+		parts.append(["Bound by marriage", float(GameData.rule("marriage_opinion"))])
 	if r.alliance:
 		parts.append(["Allies", 20.0])
 	elif r.pact:
@@ -131,7 +134,7 @@ static func _demand_refused(city: CityMap, from_id: String, to_id: String):
 	city.change_opinion(from_id, to_id, -5.0, "declined")
 	var text = "The %s refused to pay the %s tribute: their raids get +%d%% odds for %d days." % [city.faction_name(to_id), city.faction_name(from_id),
 		roundi((GameData.rule("emboldened_odds") - 1.0) * 100), r.bold_until[from_id] - city.day]
-	city.event.emit(text, "alert" if to_id == city.player_id else "info")
+	city.event.emit(text, "bad" if to_id == city.player_id else "info")
 
 static func _amount_text(amounts: Dictionary) -> String:
 	var parts = []
@@ -177,7 +180,27 @@ static func check_action(city: CityMap, action_id: String, from_id: String, to_i
 			return "A proposal is already waiting for an answer"
 	if def["kind"] != "gift" and r.at_war:
 		return "You're at war (make peace first)"
+	# A tributary's dealings abroad are its suzerain's: it may only trade
+	if action_id != "trade" and city.overlord_of(from_id) != "" and city.overlord_of(from_id) != to_id:
+		return "Tributaries make no diplomacy but trade (they answer to the %s)" % city.faction_name(city.overlord_of(from_id))
 	match action_id:
+		"match":
+			var mine = city.match_offer(from_id)
+			if mine == null:
+				return "You have no unmarried grown family member to offer"
+			if city.match_partner(mine, to_id) == null:
+				return "They have nobody unmarried of a fitting age for %s" % mine.name
+		"backing":
+			var target = city.pressing_claim_on(from_id)
+			if target == "":
+				return "You have no claim under way (justify a war goal first)"
+			if to_id == target:
+				return "They're the ones you're claiming against"
+			if to_id in city.claim_backers(from_id, target):
+				return "They already back your claim on the %s" % city.faction_name(target)
+			var bond = city.relation(to_id, target)
+			if bond.alliance or bond.overlord != "":
+				return "They're bound to the %s by treaty" % city.faction_name(target)
 		"trade":
 			if r.trade:
 				return "You already trade with them"
@@ -195,14 +218,14 @@ static func check_action(city: CityMap, action_id: String, from_id: String, to_i
 			if r.alliance and not in_renewal_window(city, r):
 				return "Alliance holds for %d more days (renewal opens %d days before it lapses)" % [r.treaty_until_day - city.day, GameData.rule("treaty_renewal_days")]
 			if r.overlord != "":
-				return "Vassals already fight together"
+				return "Tributaries already fight with their suzerain"
 			if city.opinion_of(to_id, from_id) < min_opinion:
 				return "They need to think well of you first (opinion %d+, now %d)" % [min_opinion, city.opinion_of(to_id, from_id)]
 		"vassalage":
 			if r.overlord != "":
-				return "Already bound by vassalage"
+				return "Already a tributary arrangement between you"
 			if city.overlord_of(from_id) != "":
-				return "A vassal can't take vassals"
+				return "A tributary can't take tributaries"
 			if city.overlord_of(to_id) != "":
 				return "They already serve the %s" % city.faction_name(city.overlord_of(to_id))
 			# A small faction will take a patron much closer to its own size than a great one would
@@ -225,13 +248,13 @@ static func check_action(city: CityMap, action_id: String, from_id: String, to_i
 				return "You demanded tribute %d days ago; wait until %d have passed" % [city.day - r.last_demand[from_id], GameData.rule("menace_memory_days")]
 		"integrate":
 			if r.overlord != from_id:
-				return "They're not your vassal"
+				return "They're not your tributary"
 			if to_id == city.player_id:
 				return "The player can't be integrated"
 			var days_as_vassal = city.day - r.vassal_since_day
 			var needed = int(GameData.rule("integrate_min_vassal_days"))
 			if days_as_vassal < needed:
-				return "Vassal for %d days (needs %d)" % [days_as_vassal, needed]
+				return "Tributary for %d days (needs %d)" % [days_as_vassal, needed]
 			if city.opinion_of(to_id, from_id) < min_opinion:
 				return "Not loyal enough (opinion %d, needs %d)" % [city.opinion_of(to_id, from_id), min_opinion]
 	if not for_resolution and not city.factions[from_id].can_afford(action_cost(city, action_id, from_id, to_id)):
@@ -269,6 +292,9 @@ static func acceptance(city: CityMap, action_id: String, from_id: String, to_id:
 	if envoy:
 		factors.append(["Your Envoy %s (Diplomacy %d)" % [envoy.name, envoy.skills["diplomacy"]],
 			1.0 + (envoy.skills["diplomacy"] - GameData.rule("skill_neutral")) * GameData.rule("envoy_acceptance_step")])
+	# Families bound by marriage deal more easily (doc 16)
+	if action_id in ["pact", "alliance", "backing"] and city.marriage_tie(from_id, to_id):
+		factors.append(["Bound by marriage", GameData.rule("marriage_acceptance")])
 	match action_id:
 		"trade":
 			var interest = to.effect("trade_interest_mult")
@@ -293,6 +319,14 @@ static func acceptance(city: CityMap, action_id: String, from_id: String, to_id:
 				factors.append(["Common enemy: the %s" % city.faction_name(threat), 1.6])
 			else:
 				factors.append(["No common enemy", 0.6])
+		"backing":
+			# Backing a claim on a faction they dislike is easy; on a friend, hard. An ally stands by you
+			var target = city.pressing_claim_on(from_id)
+			if target != "":
+				var view = city.opinion_of(to_id, target)
+				factors.append(["Their view of the %s (%+d)" % [city.faction_name(target), view], clampf(1.0 - view / 100.0, 0.4, 1.8)])
+				if city.relation(from_id, to_id).alliance:
+					factors.append(["Your ally", 1.5])
 		"vassalage":
 			var ratio = city.faction_strength(to_id) / maxf(1.0, city.faction_strength(from_id))
 			factors.append(["They're %d%% of your strength" % (ratio * 100), clampf(1.6 - ratio * 2.0, 0.3, 1.5)])
@@ -359,6 +393,11 @@ static func resolve_mission(city: CityMap, m: DiplomaticMission):
 			city.event.emit("The %s accepted gifts from the %s (opinion %+d)." % [city.faction_name(m.to_id), city.faction_name(m.from_id), gain], "good" if m.from_id == city.player_id else "info")
 		return
 	if def["kind"] == "tribute":
+		# Taking tribute binds you, so the player chooses whether to take it
+		if m.to_id == city.player_id:
+			if check_action(city, m.action_id, m.from_id, m.to_id, true) == "":
+				city.add_proposal(m.action_id, m.from_id)
+			return
 		var price = tribute_price(city, m.from_id, m.to_id)
 		if city.factions[m.from_id].can_afford(price):
 			city.factions[m.from_id].pay(price)
@@ -394,6 +433,23 @@ static func form_treaty(city: CityMap, action_id: String, from_id: String, to_id
 	var names = [city.faction_name(from_id), city.faction_name(to_id)]
 	var text = ""
 	match def.get("treaty", def["kind"]):
+		"marriage":
+			# Theirs marries into the proposer's family (cross_match announces it)
+			city.cross_match(from_id, to_id)
+			return
+		"backing":
+			# They promise to stand behind the claim (add_backer announces it)
+			city.add_backer(from_id, to_id)
+			return
+		"tribute":
+			# Offered tribute, accepted: the payer hands it over if it still can
+			var offered = tribute_price(city, from_id, to_id)
+			if not city.factions[from_id].can_afford(offered):
+				city.event.emit("The %s can no longer pay the tribute they offered." % names[0], "info")
+				return
+			city.factions[from_id].pay(offered)
+			_receive_tribute(city, from_id, to_id, offered)
+			return
 		"demand":
 			# The one the demand was made of pays up
 			var price = tribute_price(city, to_id, from_id)
@@ -420,7 +476,7 @@ static func form_treaty(city: CityMap, action_id: String, from_id: String, to_id
 		"vassal":
 			r.overlord = from_id
 			r.vassal_since_day = city.day
-			text = "The %s became vassals of the %s." % [names[1], names[0]]
+			text = "The %s became tributaries of the %s." % [names[1], names[0]]
 		"integrate":
 			text = "The %s have merged into the %s." % [names[1], names[0]]
 			city.retire_faction(to_id, from_id)
@@ -451,11 +507,11 @@ static func break_treaty(city: CityMap, faction_id: String, other_id: String, tr
 			_announce(city, faction_id, "broke their %s with the %s" % ["alliance" if was_alliance else "non-aggression pact", other_name])
 		"vassal":
 			if r.overlord == "":
-				return "No vassalage to end"
+				return "No tributary arrangement to end"
 			if r.overlord == faction_id:
 				r.overlord = ""
 				city.change_opinion(other_id, faction_id, 20.0, "released")
-				_announce(city, faction_id, "released the %s from vassalage" % other_name)
+				_announce(city, faction_id, "released the %s from paying tribute" % other_name)
 			else:
 				# Declaring independence: the overlord answers with war
 				r.overlord = ""

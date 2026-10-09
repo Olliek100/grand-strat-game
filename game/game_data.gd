@@ -23,6 +23,12 @@ static func building(id: String) -> Dictionary:
 static func diplomacy_actions() -> Dictionary:
 	return _load("diplomacy")
 
+static func war_goals() -> Dictionary:
+	return _load("war_goals")
+
+static func war_goal(id: String) -> Dictionary:
+	return war_goals()[id]
+
 static func diplomacy_action(id: String) -> Dictionary:
 	return diplomacy_actions()[id]
 
@@ -202,10 +208,29 @@ static func validate() -> Array:
 			problems.append("Event '%s' has unknown moment '%s'" % [id, ev.get("moment")])
 		if ev.get("options", []).size() < 2:
 			problems.append("Event '%s' needs at least two options" % id)
+		for upbringing in ev.get("upbringing", []):
+			if not council()["upbringings"].has(upbringing):
+				problems.append("Event '%s' is for unknown upbringing '%s'" % [id, upbringing])
 		for option in ev.get("options", []):
-			for key in ["label", "days", "ai_goal"]:
+			for key in ["label", "ai_goal"]:
 				if not option.has(key):
 					problems.append("Event '%s' has an option missing '%s'" % [id, key])
+			# A timed effect needs its length; an option that only shapes a child doesn't
+			var timed = option.has("effects") or option.has("venture_odds") or option.has("skill_odds")
+			if timed and not option.has("days"):
+				problems.append("Event '%s' has an option with effects but no 'days'" % id)
+			if option.has("marry") and option["marry"] not in CityMap.MARRY_KINDS:
+				problems.append("Event '%s' has an option marrying unknown kind '%s'" % [id, option["marry"]])
+			if option.has("upbringing") and not council()["upbringings"].has(option["upbringing"]):
+				problems.append("Event '%s' has an option with unknown upbringing '%s'" % [id, option["upbringing"]])
+			if option.get("needs", "") not in CityMap.EVENT_NEEDS:
+				problems.append("Event '%s' has an option with unknown need '%s'" % [id, option.get("needs")])
+			for t in option.get("child", {}).get("leanings", {}):
+				if not council()["traits"].has(t):
+					problems.append("Event '%s' leans a child toward unknown trait '%s'" % [id, t])
+			for s in option.get("child", {}).get("skills", {}):
+				if s != "$best" and s not in Character.SKILLS:
+					problems.append("Event '%s' raises unknown skill '%s'" % [id, s])
 			for name in option.get("effects", {}):
 				if name not in CityMap.EVENT_EFFECTS:
 					problems.append("Event '%s' has unknown effect '%s'" % [id, name])
@@ -233,6 +258,15 @@ static func validate() -> Array:
 		var unlock = national_ambitions()[id].get("unlocks", "")
 		if unlock != "" and not governments().has(unlock):
 			problems.append("National ambition '%s' unlocks unknown government '%s'" % [id, unlock])
+	for id in war_goals():
+		var goal: Dictionary = war_goals()[id]
+		for key in ["label", "description", "demand", "needs_district", "ai_max_strength_ratio", "justify_days", "cost", "price", "accept_need", "accept_max", "ai_goal"]:
+			if not goal.has(key):
+				problems.append("War goal '%s' is missing '%s'" % [id, key])
+		if id not in CityMap.WAR_GOALS:
+			problems.append("War goal '%s' has no rule in the code (CityMap.WAR_GOALS)" % id)
+		if goal.get("ai_goal") not in FactionAI.GOALS:
+			problems.append("War goal '%s' has unknown ai_goal '%s'" % [id, goal.get("ai_goal")])
 	for f in scenario().get("factions", []):
 		for trait_name in f.get("traits", {}):
 			if not traits().has(trait_name):

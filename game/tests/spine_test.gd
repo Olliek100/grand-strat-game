@@ -30,8 +30,15 @@ func _init():
 	_test_tasks()
 	_test_district_payoffs()
 	_test_events_and_births()
+	_test_education()
 	_test_minor_patrons()
 	_test_defence()
+	_test_force()
+	_test_resources_and_pauses()
+	_test_war_goals()
+	_test_matches()
+	_test_houses()
+	_test_cross_matches()
 	_test_claimed_land_is_off_limits()
 	_test_the_arc()
 	_test_legacy()
@@ -264,7 +271,7 @@ func _test_treaties():
 	var c2 = _new_city()
 	Diplomacy.form_treaty(c2, "vassalage", me, "guild")
 	_check("a vassal pays tribute to its overlord", c2.daily_economy(me)["tribute"]["wealth"] > 0.0 and c2.daily_economy("guild")["tribute"]["wealth"] < 0.0)
-	_check("a vassal can't declare war", c2.check_declare_war("guild", "rival") == "Vassals can't declare war")
+	_check("a tributary can't start a war", c2.check_declare_war("guild", "rival") == "Tributaries can't start wars" and c2.check_justify("guild", "rival", "claim") == "Tributaries can't start wars", c2.check_justify("guild", "rival", "claim"))
 	var r = c2.relation(me, "guild")
 	r.vassal_since_day = -1000
 	r.opinion["guild"] = 80.0
@@ -592,6 +599,28 @@ func _test_raiders_and_deterrence():
 	dogs.supplies = 50.0
 	dogs.manpower = 20.0
 	_check("a faction paid off can't raid you", c.check_launch("rust_dogs", "raid", between).begins_with("You promised"))
+	# Raiding the one who promised to spare you voids the promise
+	var dogs_home: District = c.districts[dogs.home_id]
+	p.manpower = 20.0
+	p.arms = 10.0
+	p.supplies = 50.0
+	c.launch_venture(me, "raid", dogs_home)
+	_check("raiding them voids their promise", r.spare_until["rust_dogs"] <= c.day)
+	c.ventures = c.ventures.filter(func(v): return v.faction_id != me)
+	# Tribute offered to the player waits for an answer, and declining binds nothing
+	var r2 = c.relation("rust_dogs", me)
+	r2.last_raid[me] = maxi(1, c.day)
+	r2.spare_until[me] = 0
+	dogs.materials = 100.0
+	c.proposals.clear()
+	Diplomacy.resolve_mission(c, DiplomaticMission.new("tribute", "rust_dogs", me, 0))
+	_check("tribute offered to you waits for your answer", c.proposal_between("rust_dogs", me) >= 0 and r2.spare_until[me] <= c.day)
+	c.answer_proposal(c.proposal_between("rust_dogs", me), false)
+	_check("declined tribute leaves you free to raid", r2.spare_until[me] <= c.day)
+	Diplomacy.resolve_mission(c, DiplomaticMission.new("tribute", "rust_dogs", me, 0))
+	c.answer_proposal(c.proposal_between("rust_dogs", me), true)
+	_check("accepted tribute binds you", r2.spare_until[me] > c.day)
+	r2.spare_until[me] = 0
 	# A refused demand emboldens the raider
 	Diplomacy._demand_refused(c, "rust_dogs", me)
 	var odds = VentureSystem.compute_odds("raid", dogs, between, c, me)
@@ -778,6 +807,125 @@ func _test_district_payoffs():
 	_check("the rival's same district rules apply to everyone", c.district_payoffs(c.districts[c.factions["rival"].home_id]).has("restored"))
 
 # Choice events: they come, wait for the player, cost nothing, and their effects last a set time; families grow
+# Doc 14 slice 2: the upbringing choice at 6, growing up, and traits settling at 16
+func _test_education():
+	var c = CityMap.new()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	var leader = c.leader_of(me)
+	var child = c._new_child(leader, 0)
+	# (by chance a newborn can have no particular nature, so its leanings may be empty)
+	_check("a newborn has leanings, not traits", child.traits.is_empty() and child.leanings.values().all(func(x): return x == GameData.rule("nature_at_birth")), str(child.traits))
+	child.age = 6
+	c.pending_events.clear()
+	c._fire_moment(me, "education", child)
+	_check("at six, the player chooses an upbringing", c.pending_events.size() == 1 and c.pending_events[0]["event"] == "upbringing")
+	var entry = c.pending_events[0]
+	var options: Array = GameData.events()["upbringing"]["options"]
+	var school = 0
+	var parents = 0
+	for i in options.size():
+		if options[i].get("upbringing") == "school":
+			school = i
+		if options[i].get("upbringing") == "parents":
+			parents = i
+	_check("school needs a School, and says where to get one", c.event_option_blocked(me, entry, options[school]).begins_with("Needs a School"))
+	_check("the parents need nothing", c.event_option_blocked(me, entry, options[parents]) == "")
+	var home: District = c.districts[p.home_id]
+	home.buildings.append("school")
+	_check("with a School, school can be chosen", c.event_option_blocked(me, entry, options[school]) == "", c.event_option_blocked(me, entry, options[school]))
+	var wealth = p.wealth
+	c.answer_event(school)
+	_check("the choice costs nothing and sets the upbringing", child.upbringing == "school" and p.wealth == wealth)
+	# Ten years at school: Diplomacy and Stewardship grow fastest, and the child leans Of the People
+	for y in 10:
+		c._grow_year(child)
+	# Over many schooled children (one alone can be an exception)
+	var taught = 0
+	var untaught = 0
+	for k in 30:
+		var pupil = c._new_child(leader, 6)
+		pupil.upbringing = "school"
+		for y in 10:
+			c._grow_year(pupil)
+		taught += pupil.skills["diplomacy"] + pupil.skills["stewardship"]
+		untaught += pupil.skills["command"] + pupil.skills["cunning"]
+		c.characters.erase(pupil)
+	_check("schooling raises Diplomacy and Stewardship most", taught > untaught * 1.5, "%d vs %d" % [taught, untaught])
+	_check("a schooled child leans Of the People", child.leanings.get("of_the_people", 0.0) >= 5.0, str(child.leanings))
+	_check("a strong leaning has a good but never certain chance to settle", c.settle_chance(child, "of_the_people") > 0.4 and c.settle_chance(child, "of_the_people") <= 0.8)
+	# Across many children the choice biases the outcome
+	var people = 0
+	var rulers = 0
+	var both = 0
+	for k in 200:
+		var a = c._new_child(leader, 6)
+		a.upbringing = "school"
+		var b = c._new_child(leader, 6)
+		b.upbringing = "hired"
+		b.tutor_skill = "command"
+		for y in 10:
+			c._grow_year(a)
+			c._grow_year(b)
+		c._settle_traits(a)
+		c._settle_traits(b)
+		people += 1 if a.has_trait("of_the_people") else 0
+		rulers += 1 if b.has_trait("born_to_rule") else 0
+		for x in [a, b]:
+			both += 1 if x.has_trait("of_the_people") and x.has_trait("born_to_rule") else 0
+		c.characters.erase(a)
+		c.characters.erase(b)
+	_check("most schooled children settle Of the People", people > 100, "%d of 200" % people)
+	_check("most tutored children settle Born to Rule", rulers > 90, "%d of 200" % rulers)
+	_check("opposite traits never settle together", both == 0)
+	# Born to Rule: sharper at their best skill, and a stronger claim as heir
+	var heir = c._new_child(leader, 20)
+	heir.skills = {"command": 7, "cunning": 2, "diplomacy": 2, "stewardship": 2}
+	p.designated_heir = heir.id
+	var claim = c.succession_outlook(me)["claim"]
+	heir.traits = ["born_to_rule"]
+	_check("Born to Rule adds to the heir's claim", c.succession_outlook(me)["claim"] > claim + 9.0)
+	_check("Born to Rule sharpens their best skill", heir.trait_factors("command").size() == 1 and heir.trait_factors("diplomacy").is_empty())
+	# Childhood events fit the upbringing and shape the child
+	var kid = c._new_child(leader, 9)
+	kid.upbringing = "school"
+	c.pending_events.clear()
+	c._fire_moment(me, "childhood", kid)
+	var ev_id: String = c.pending_events[0]["event"] if not c.pending_events.is_empty() else ""
+	_check("a childhood event comes, fitting the upbringing", ev_id != "" and "school" in GameData.events()[ev_id].get("upbringing", ["school"]), ev_id)
+	var before = kid.leanings.duplicate()
+	c.answer_event(0)
+	_check("a childhood choice changes the child's leanings", kid.leanings != before)
+	_check("and won't come again for that child", ev_id in kid.childhood)
+	# The AI raises its own children, by the same options
+	var ai_child = c._new_child(c.leader_of("guild"), 6)
+	c._fire_moment("guild", "education", ai_child)
+	_check("the AI picks an upbringing it can take", ai_child.upbringing in ["tutor", "hired", "parents"] or (ai_child.upbringing == "school" and c.has_school("guild")), ai_child.upbringing)
+	# Changing an upbringing: the player reopens the choice, at most once a year
+	var young = c._new_child(leader, 4)
+	_check("a child under six can't have it changed yet", c.check_upbringing_change(young).begins_with("Chosen when they turn"))
+	var pupil = c._new_child(leader, 11)
+	pupil.upbringing = "tutor"
+	var old_tutor = c._new_person(me, "Test", 40, "m")
+	old_tutor.post = "fixer"
+	pupil.tutor_id = old_tutor.id
+	pupil.tutor_skill = old_tutor.best_skill()
+	var skills_before = pupil.skills.duplicate()
+	c.pending_events.clear()
+	_check("a child raised before the story began can be changed at once", c.request_upbringing_change(pupil) == "", c.check_upbringing_change(pupil))
+	c.decline_event()
+	_check("keeping things as they are changes nothing", c.pending_events.is_empty() and pupil.upbringing == "tutor")
+	c.request_upbringing_change(pupil)
+	var loyalty = old_tutor.loyalty()
+	c.answer_event(parents)
+	_check("the change takes, and what they learned stays", pupil.upbringing == "parents" and pupil.skills == skills_before)
+	_check("the dropped tutor resents it", old_tutor.loyalty() < loyalty)
+	_check("it can't be changed again for a year", c.check_upbringing_change(pupil).begins_with("Changed lately"))
+	c.pending_events.clear()
+	# Saved and loaded
+	var saved = Character.from_dict(child.to_dict())
+	_check("upbringing and leanings are saved", saved.upbringing == "school" and saved.leanings == child.leanings)
+
 func _test_events_and_births():
 	var c = CityMap.new()
 	var me = c.player_id
@@ -800,15 +948,15 @@ func _test_events_and_births():
 	c._fire_moment("guild", "pulse", c.leader_of("guild"))
 	_check("the AI answers its own events", ai.timed_effects.size() == ai_effects + 1 and c.pending_events.size() == waiting)
 	# Every married couple can have children: news, then a birth
-	var leader = c.leader_of(me)
-	var spouse = c.character_by_id(leader.spouse_id)
-	var mother = leader if leader.sex == "f" else spouse
-	mother.age = 30
+	# A fresh couple from the family (not the leader's: a leader's death risk made this flaky)
+	var mother = c._new_person(me, c.leader_of(me).dynasty, 30, "f")
+	mother.family = true
+	c._marry(mother)
 	var kids_before = c.everyone_of(me).filter(func(x): return mother.id in x.parent_ids).size()
 	mother.due_day = c.day + 5
 	for i in 40:
 		c.advance_day()
-	_check("a pregnancy ends in a birth", c.everyone_of(me).filter(func(x): return mother.id in x.parent_ids).size() == kids_before + 1 and mother.due_day == 0)
+	_check("a pregnancy ends in a birth", c.everyone_of(me).filter(func(x): return mother.id in x.parent_ids).size() == kids_before + 1 and mother.due_day == 0, "kids %d->%d, due %d, alive %s, day %d" % [kids_before, c.everyone_of(me).filter(func(x): return mother.id in x.parent_ids).size(), mother.due_day, str(mother.death_day < 0), c.day])
 	_check("a birth brings a choice event", c.pending_events.any(func(e): return GameData.events()[e["event"]]["moment"] == "birth"))
 	var loaded = CityMap.new(bytes_to_var(var_to_bytes(c.to_save())))
 	_check("waiting events and timed effects survive a save", loaded.pending_events.size() == c.pending_events.size() and loaded.factions["guild"].timed_effects.size() == ai.timed_effects.size())
@@ -821,6 +969,476 @@ func _test_minor_patrons():
 	var ratio = c.faction_strength("st_brigids") / c.faction_strength(me)
 	var err = Diplomacy.check_action(c, "vassalage", me, "st_brigids")
 	_check("a minor faction up to 70% of your strength can become your vassal", ratio >= 0.7 or not err.begins_with("They're too strong"), "%s (ratio %.2f)" % [err, ratio])
+
+# Doc 16, H1: grown family members marry (a choice event), so a family branches into generations
+func _test_matches():
+	var c = _new_city()
+	var me = c.player_id
+	var leader = c.leader_of(me)
+	var heir = c._new_child(leader, 18)
+	heir.sex = "m"
+	var captain = c._new_person(me, "Hale", 22, "f")
+	captain.skills["command"] = 9
+	c.pending_events.clear()
+	c._fire_moment(me, "match", heir)
+	_check("a grown family member gets a match event", c.pending_events.size() == 1 and c.pending_events[0]["event"] == "a_match")
+	var entry = c.pending_events[0]
+	_check("the match names a captain", int(entry["match_id"]) == captain.id, str(entry.get("match_id")))
+	_check("the button names them", c.event_option_label(entry, GameData.events()["a_match"]["options"][0]).contains(captain.name))
+	var loyalty = captain.loyalty()
+	c.answer_event(0)
+	_check("they marry, and the captain joins the family", heir.spouse_id == captain.id and captain.spouse_id == heir.id and captain.family)
+	_check("binding a captain to the family raises their loyalty", captain.loyalty() > loyalty)
+	# Someone from the people: a new spouse, Of the People
+	var sister = c._new_child(leader, 20)
+	sister.sex = "f"
+	c._fire_moment(me, "match", sister)
+	var people_option = 0
+	for i in GameData.events()["a_match"]["options"].size():
+		if GameData.events()["a_match"]["options"][i].get("marry", "") == "people":
+			people_option = i
+	c.answer_event(people_option)
+	var spouse = c.character_by_id(sister.spouse_id)
+	_check("a match from the people brings in someone Of the People", spouse != null and spouse.family and spouse.has_trait("of_the_people"))
+	# With nobody fitting, the captain option is closed and says why
+	var lonely = c._new_child(leader, 19)
+	lonely.sex = "f"
+	for x in c.characters_of(me):
+		if x.sex == "m" and not x.family:
+			x.spouse_id = 99999
+	c._fire_moment(me, "match", lonely)
+	var e2 = c.pending_events[c.pending_events.size() - 1]
+	_check("no captain to marry: the option says so", c.event_option_blocked(me, e2, GameData.events()["a_match"]["options"][0]).begins_with("No unmarried"))
+	c.pending_events.clear()
+	# The family has a limit
+	for k in 20:
+		c._new_child(leader, 2)
+	var due_before = sister.due_day
+	for i in 40:
+		c.advance_day()
+	_check("a family at its limit has no more children", c.family_size(me) >= int(GameData.rule("family_cap")) and sister.due_day == due_before)
+	# The AI answers its own matches
+	var ai_heir = c._new_child(c.leader_of("guild"), 18)
+	c._fire_moment("guild", "match", ai_heir)
+	_check("the AI answers its own match (marrying or not)", c.pending_events.is_empty())
+
+# Doc 16, H2: houses inside a faction, with land, loyalty, revolt, the call to arms and matches
+func _test_houses():
+	var c = _new_city()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	var leader = c.leader_of(me)
+	var son = c._new_child(leader, 20)
+	var home: District = c.districts[p.home_id]
+	_border_with(c, me, "guild")
+	var land: District = null
+	for n_id in home.neighbor_ids:
+		if c.districts[n_id].owner_id() == "":
+			land = c.districts[n_id]
+			break
+	land.influence.clear()
+	land.add_influence(me, 80.0)
+	_check("your home can't be granted", c.check_grant(me, son, home).begins_with("Not your home"))
+	_check("a child can't hold land", c.check_grant(me, c._new_child(leader, 9), land).ends_with("too young to hold land"))
+	var captain = c._new_person(me, "Hale", 30, "m")
+	captain.loyalty_mods = [{"id": "dismissed", "value": -30.0}]
+	_check("a disloyal captain can't be trusted with land", c.check_grant(me, captain, land).contains("isn't loyal enough"))
+	var loyalty = son.loyalty()
+	_check("granting land founds a house", c.grant_land(me, son, land) == "" and son.house_id >= 0 and land.house_id == son.house_id)
+	var hid = son.house_id
+	_check("the house keeps a share of the district's income", c.house_keep(land) < 1.0 and c.house_keep(home) == 1.0)
+	_check("being granted land raises their loyalty", son.loyalty() > loyalty)
+	_check("the house's head is its eldest grown member", c.house_head(hid) == son)
+	# A match with the house binds it
+	var bride = c._new_person(me, "Hale", 20, "f")
+	bride.house_id = hid
+	var heir = c._new_child(leader, 19)
+	heir.sex = "m"
+	c.pending_events.clear()
+	c._fire_moment(me, "match", heir)
+	var entry = c.pending_events[0]
+	_check("a match can be made with a house", int(entry.get("house_match_id", -1)) == bride.id)
+	var house_option = 0
+	for i in GameData.events()["a_match"]["options"].size():
+		if GameData.events()["a_match"]["options"][i].get("marry", "") == "house":
+			house_option = i
+	var before = c.house_loyalty(hid)
+	c.answer_event(house_option)
+	_check("marrying into a house raises its loyalty", heir.spouse_id == bride.id and bride.family and c.house_loyalty(hid) > before)
+	# The call to arms
+	_check("no call to arms in peace", c.check_call_house(me, hid) == "You're not at war")
+	c.start_war(me, "guild")
+	land.garrison = 10.0
+	var manpower = p.manpower
+	c.call_house(me, hid)
+	_check("a called house answers once, joining or declining", c.check_call_house(me, hid).begins_with("Asked already") and (p.manpower > manpower or land.garrison == 10.0))
+	# A disloyal house warns, then breaks away with its land
+	son.loyalty_mods = [{"id": "dismissed", "value": -30.0}, {"id": "passed_over", "value": -25.0}]
+	son.traits.clear()
+	var warned = []
+	c.event.connect(func(t, k): if "is restless" in t: warned.append(t))
+	c._update_houses()
+	_check("a disloyal house warns you first", warned.size() == 1, "loyalty %d" % c.house_loyalty(hid))
+	c._house_revolt(c.house(hid))
+	_check("a house that revolts breaks away with its land, at war with you", land.owner_id() != me and land.owner_id() != "" and c.is_at_war(me, land.owner_id()) and son.faction_id == land.owner_id())
+	# Vassalize makes the absorbed ruling family a house holding its old districts
+	var c2 = _new_city()
+	var me2 = c2.player_id
+	var dogs_leader = c2.leader_of("rust_dogs")
+	var dogs_land = c2.districts[c2.factions["rust_dogs"].home_id]
+	c2._absorb("rust_dogs", me2)
+	_check("an absorbed ruling family becomes a house holding its old land", dogs_leader.house_id >= 0 and dogs_land.house_id == dogs_leader.house_id and dogs_land.owner_id() == me2)
+	# A house head (its eldest grown member) can contest a succession
+	var head = c2.house_head(dogs_leader.house_id)
+	head.loyalty_mods = [{"id": "absorbed", "value": -30.0}]
+	head.skills["command"] = 10
+	var contesters = c2.succession_outlook(me2)["contesters"].map(func(x): return x[0])
+	_check("a disloyal house head contests the succession", head in contesters, "%s loyalty %d" % [head.name, head.loyalty()])
+	# Losing a house's land in war
+	head.loyalty_mods.clear()
+	var head_loyalty = head.loyalty()
+	c2.start_war(me2, "guild")
+	var owner_before = dogs_land.owner_id()
+	dogs_land.influence.clear()
+	dogs_land.add_influence("guild", 90.0)
+	c2._announce_ownership_change(dogs_land, owner_before, "guild")
+	_check("a house that loses its land blames you", dogs_land.house_id == -1 and head.loyalty() < head_loyalty)
+	# Saved and loaded
+	var saved = CityMap.new(bytes_to_var(var_to_bytes(c2.to_save())))
+	_check("houses are saved", saved.houses.size() == c2.houses.size() and saved.next_house_id == c2.next_house_id)
+
+# Doc 16, H3: marriage between factions binds their families
+func _test_cross_matches():
+	var c = _new_city()
+	var me = c.player_id
+	for x in c.characters_of(me):
+		if x.family:
+			x.spouse_id = c.leader_of(me).id
+	_check("with nobody to offer, no match", Diplomacy.check_action(c, "match", me, "guild").begins_with("You have no unmarried"))
+	var son = c._new_child(c.leader_of(me), 24)
+	son.sex = "m"
+	for x in c.characters_of("guild"):
+		x.spouse_id = c.leader_of("guild").id
+	_check("they need someone too", Diplomacy.check_action(c, "match", me, "guild").begins_with("They have nobody"))
+	var bride = c._new_child(c.leader_of("guild"), 22)
+	bride.sex = "f"
+	c.factions[me].wealth = 100.0
+	_check("a match can be proposed", Diplomacy.check_action(c, "match", me, "guild") == "", Diplomacy.check_action(c, "match", me, "guild"))
+	Diplomacy.form_treaty(c, "match", me, "guild")
+	_check("their bride joins your family", bride.faction_id == me and bride.family and bride.spouse_id == son.id and son.spouse_id == bride.id)
+	_check("the families are bound", c.marriage_tie(me, "guild") and Diplomacy.opinion_baseline(c, "guild", me).any(func(part): return part[0] == "Bound by marriage"))
+	_check("bound families deal more easily", Diplomacy.acceptance(c, "pact", me, "guild")["factors"].any(func(f): return f[0] == "Bound by marriage"))
+	_check("pressing a claim on in-laws breaks your word", c.oath_broken(me, "guild").contains("marriage"))
+	var saved = Relation.from_dict(c.relation(me, "guild").to_dict())
+	_check("marriages between factions are saved", saved.marriages.size() == 1)
+
+# Gives `them` a district next to `me`'s home, and lifts the opening truce, so the two can quarrel
+func _border_with(c: CityMap, me: String, them: String):
+	var home: District = c.districts[c.factions[me].home_id]
+	for n_id in home.neighbor_ids:
+		var d: District = c.districts[n_id]
+		if d.owner_id() == "":
+			d.influence.clear()
+			d.add_influence(them, 60.0)
+			break
+	c.relation(me, them).truce_until_day = 0
+	c.border_cache_day = -1
+
+# Doc 15, P2: no war without a justified goal and a refused ultimatum; wars end on their goal
+func _test_war_goals():
+	var c = _new_city()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	var dogs = "rust_dogs"
+	p.renown = 200.0
+	p.wealth = 500.0
+	var r = c.relation(me, dogs)
+	_border_with(c, me, dogs)
+	_check("a claim needs a shared border", c.check_justify(me, "guild", "claim") != "" or c.shares_border(me, "guild"))
+	var target: District = c.claim_district(me, dogs)
+	_check("a claim names one of their districts on your border", target != null and target.owner_id() == dogs)
+	# Without cause it takes twice as long
+	var days = c.justify_days(me, dogs, "claim")
+	_check("no cause: twice as long", c.claim_reason(me, dogs) != "" or days == int(GameData.war_goal("claim")["justify_days"] * GameData.rule("claim_no_reason_mult")))
+	var renown = p.renown
+	_check("justifying a claim works", c.justify(me, dogs, "claim") == "", c.check_justify(me, dogs, "claim"))
+	_check("it costs renown and wealth", p.renown < renown)
+	_check("one claim at a time", c.check_justify(me, "guild", "claim") != "")
+	_check("the target thinks less of you", r.modifiers[dogs].any(func(m): return m["id"] == "claimed_us"))
+	# Justified: the ultimatum goes out; refused, it's war over the goal
+	if not r.claim.is_empty():
+		r.claim["ready_day"] = c.day
+	c._update_claims()
+	_check("a justified claim becomes an ultimatum, or is answered", r.claim.is_empty() or r.claim["stage"] in ["ultimatum", "war"])
+	r.claim = {"by": me, "goal": "claim", "district": target.id, "reason": "", "stage": "ultimatum", "ready_day": c.day, "deadline": c.day + 15}
+	r.at_war = false
+	c.answer_ultimatum(r, false)
+	_check("a refused ultimatum means war over the goal", r.at_war and r.claim["stage"] == "war")
+	_check("no terms before the war score allows", c.check_enforce(me, dogs).begins_with("War score"))
+	r.war_points = 60.0
+	_check("enough war score: you can take your terms", c.check_enforce(me, dogs) == "", c.check_enforce(me, dogs))
+	c.enforce_claim(me, dogs)
+	_check("enforcing a claim takes the district and ends the war", target.owner_id() == me and not r.at_war and r.claim.is_empty())
+	# An ultimatum to the player waits in Proposals; giving in applies the terms with no fight
+	var c2 = _new_city()
+	var me2 = c2.player_id
+	var r2 = c2.relation(me2, dogs)
+	_border_with(c2, me2, dogs)
+	var home2: District = c2.claim_district(dogs, me2)
+	r2.claim = {"by": dogs, "goal": "claim", "district": home2.id if home2 else -1, "reason": "", "stage": "justifying", "ready_day": c2.day, "deadline": 0}
+	c2._update_claims()
+	var index = -1
+	for i in c2.proposals.size():
+		if c2.proposals[i]["action"] == "ultimatum":
+			index = i
+	_check("an ultimatum to you waits for your answer", index >= 0 and r2.claim["stage"] == "ultimatum")
+	if index >= 0 and home2:
+		c2.answer_proposal(index, true)
+		_check("giving in hands the district over, with no war", home2.owner_id() == dogs and not r2.at_war and r2.claim.is_empty())
+	# Worn out first: the claimant pays and can't claim again for a while
+	var c3 = _new_city()
+	var me3 = c3.player_id
+	var r3 = c3.relation(me3, dogs)
+	_border_with(c3, me3, dogs)
+	c3.factions[me3].wealth = 100.0
+	r3.claim = {"by": me3, "goal": "subjugate", "district": -1, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0}
+	c3.start_war(me3, dogs)
+	r3.exhaustion[me3] = 100.0
+	c3._update_claims()
+	_check("worn out first: the claim fails and the claimant pays", not r3.at_war and c3.factions[me3].wealth < 100.0)
+	# Subjugate: they keep their land but trade only and pay in food, materials and wealth
+	var c4 = _new_city()
+	var me4 = c4.player_id
+	var r4 = c4.relation(me4, dogs)
+	r4.claim = {"by": me4, "goal": "subjugate", "district": -1, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0}
+	c4.start_war(me4, dogs)
+	r4.war_points = 100.0
+	c4.enforce_claim(me4, dogs)
+	_check("subjugated: they're your tributary and keep their land", r4.overlord == me4 and c4.districts_held(dogs) > 0)
+	_check("a tributary makes no diplomacy but trade", Diplomacy.check_action(c4, "pact", dogs, "guild").begins_with("Tributaries"))
+	c4.factions[dogs].manpower = 40.0
+	_check("a tributary fights with half its force", c4.crew_max(dogs, "assault") == 20)
+	# Vassalize: they're absorbed, ruling house and all
+	var c5 = _new_city()
+	var me5 = c5.player_id
+	var their_leader = c5.leader_of(dogs)
+	var r5 = c5.relation(me5, dogs)
+	r5.claim = {"by": me5, "goal": "vassalize", "district": -1, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0}
+	c5.start_war(me5, dogs)
+	r5.war_points = 100.0
+	c5.enforce_claim(me5, dogs)
+	_check("vassalized: their faction is gone, their land and ruler are yours", not c5.factions.has(dogs) and their_leader.faction_id == me5 and not their_leader.is_leader)
+	# Playtest: a weak faction raided by a strong one must have recourse; nothing but a shared border stops a claim
+	var c8 = _new_city()
+	var me8 = c8.player_id
+	_border_with(c8, me8, dogs)
+	c8.factions[me8].renown = 200.0
+	c8.factions[me8].wealth = 500.0
+	c8.factions[dogs].manpower = 500.0
+	_check("strength doesn't stop a claim", c8.check_justify(me8, dogs, "vassalize") == "", c8.check_justify(me8, dogs, "vassalize"))
+	var r8 = c8.relation(me8, dogs)
+	r8.pact = true
+	r8.treaty_until_day = c8.day + 300
+	var guild_view = c8.opinion_of("guild", me8)
+	_check("a treaty doesn't stop a claim either", c8.justify(me8, dogs, "claim") == "")
+	_check("but breaking it costs your name with everyone", not r8.pact and c8.opinion_of("guild", me8) < guild_view - 20.0, "%d -> %d" % [guild_view, c8.opinion_of("guild", me8)])
+	# Each raid by them while you justify brings the ultimatum sooner
+	var ready_before = int(r8.claim["ready_day"])
+	var raided_land: District = c8.districts[c8.factions[me8].home_id]
+	c8.factions[dogs].arms = 20.0
+	c8.factions[dogs].supplies = 50.0
+	raided_land.raid_safe_until = 0
+	c8.launch_venture(dogs, "raid", raided_land, -2, 6)
+	var raid_v = null
+	for v in c8.ventures:
+		if v.faction_id == dogs and v.venture_id == "raid":
+			raid_v = v
+	if raid_v:
+		c8._resolve(raid_v)
+		c8.ventures.erase(raid_v)
+	_check("their raid brings your ultimatum sooner", raid_v != null and int(r8.claim["ready_day"]) < ready_before, "%s -> %s" % [ready_before, r8.claim.get("ready_day")])
+	_check("justifying takes months, not days", int(GameData.war_goal("claim")["justify_days"]) >= 120 and GameData.rule("ultimatum_days") >= 45)
+	# Playtest: a claim under way could only be waited on. Send early when strong enough, withdraw, rally backers
+	var c9 = _new_city()
+	var me9 = c9.player_id
+	_border_with(c9, me9, dogs)
+	c9.factions[me9].renown = 200.0
+	c9.factions[me9].wealth = 500.0
+	c9.justify(me9, dogs, "vassalize")
+	var r9 = c9.relation(me9, dogs)
+	c9.factions[me9].manpower = 0.0
+	c9.factions[dogs].manpower = 100.0
+	_check("too weak: the ultimatum can't go early, and says how strong you need to be", c9.check_send_early(me9, dogs).begins_with("You need"))
+	_check("you can ask a third faction to back your claim", Diplomacy.check_action(c9, "backing", me9, "guild") == "", Diplomacy.check_action(c9, "backing", me9, "guild"))
+	_check("but not the faction you're claiming against", Diplomacy.check_action(c9, "backing", me9, dogs) != "")
+	var before = c9.side_strength(me9, dogs)
+	Diplomacy.form_treaty(c9, "backing", me9, "guild")
+	_check("a backer counts toward your strength", "guild" in c9.claim_backers(me9, dogs) and c9.side_strength(me9, dogs) > before)
+	c9.factions[me9].manpower = 2000.0
+	c9.factions[dogs].manpower = 0.0
+	_check("strong enough: send the ultimatum early", c9.check_send_early(me9, dogs) == "", c9.check_send_early(me9, dogs))
+	c9.send_ultimatum_early(me9, dogs)
+	_check("sending early moves the claim on", r9.claim.is_empty() or r9.claim["stage"] != "justifying")
+	if r9.claim.get("stage", "") == "war":
+		_check("a backer joins the war when the ultimatum is refused", c9.is_at_war("guild", dogs))
+	var c10 = _new_city()
+	var me10 = c10.player_id
+	_border_with(c10, me10, dogs)
+	c10.factions[me10].renown = 200.0
+	c10.factions[me10].wealth = 500.0
+	c10.justify(me10, dogs, "claim")
+	_check("you can withdraw a claim", c10.withdraw_claim(me10, dogs) == "" and c10.relation(me10, dogs).claim.is_empty())
+	_check("with no claim, nobody can be asked to back one", Diplomacy.check_action(c10, "backing", me10, "guild").begins_with("You have no claim"))
+	# The player's faction is never absorbed: losing a Vassalize war makes you a tributary instead
+	var c11 = _new_city()
+	var me11 = c11.player_id
+	var r11 = c11.relation(me11, dogs)
+	r11.claim = {"by": dogs, "goal": "vassalize", "district": -1, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0}
+	c11.start_war(dogs, me11)
+	r11.war_points = 100.0
+	c11.enforce_claim(dogs, me11)
+	_check("the player is never absorbed: they become a tributary", c11.factions.has(me11) and r11.overlord == dogs)
+	# A white peace ends the claim; a claim survives a save
+	var c6 = _new_city()
+	var r6 = c6.relation(c6.player_id, dogs)
+	r6.claim = {"by": dogs, "goal": "claim", "district": 0, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0}
+	r6.war_points = 12.0
+	var saved = Relation.from_dict(r6.to_dict())
+	_check("claims and war score are saved", saved.claim.get("goal", "") == "claim" and saved.war_points == 12.0)
+	c6.start_war(dogs, c6.player_id)
+	r6.peace_offered_by = dogs
+	c6.make_peace(c6.player_id, dogs)
+	_check("a white peace ends the claim", r6.claim.is_empty())
+	# The AI presses claims in the open rather than declaring war out of the blue
+	var c7 = _new_city()
+	var seen_claims = []
+	c7.event.connect(func(text, kind): if "justifying a claim" in text: seen_claims.append(text))
+	for i in 500:
+		c7.advance_day()
+	_check("the AI justifies claims in the open", seen_claims.size() > 0, str(seen_claims.size()))
+
+# The P1 playtest: wiped with 676 wealth and 50 manpower but no materials or arms; the game kept pausing
+func _test_resources_and_pauses():
+	var c = _new_city()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	# Fights need manpower, not arms; arms make them stronger and are used up a little
+	_check("a raid needs no arms", not GameData.venture("raid")["cost"].has("arms") and not GameData.venture("assault")["cost"].has("arms"))
+	p.arms = 0.0
+	_check("unarmed crew use no arms", c.arms_used(me, "assault", 10) == 0)
+	p.arms = 20.0
+	_check("an armed fight uses some arms", c.arms_used(me, "assault", 10) > 0 and c.arms_used(me, "assault", 10) < 10)
+	var dogs_land: District = c.districts[c.factions["rust_dogs"].home_id]
+	_check("fights take no funding", c.check_launch(me, "raid", dogs_land, -2, -1, 1).begins_with("Fights take no funding") or c.check_launch(me, "raid", dogs_land, -2, -1, 0) != "")
+	# Wealth buys materials and arms at once, dearer the more you buy
+	p.wealth = 500.0
+	p.materials = 0.0
+	var first = c.buy_price(me, "materials", 1)
+	_check("buying materials works", c.buy(me, "materials", 20) == "" and p.materials == 20.0 and p.wealth < 500.0)
+	_check("buying raises the price", c.buy_price(me, "materials", 1) > first)
+	for i in 120:
+		c._ease_prices()
+	_check("the price eases back", c.buy_price(me, "materials", 1) < first * 1.05)
+	p.arms = GameData.rule("arms_cap") - 2.0
+	_check("the armoury has a limit", c.check_buy(me, "arms", 5).begins_with("Your armoury"))
+	p.wealth = 1.0
+	_check("you can't buy without the wealth", c.check_buy(me, "materials", 5).begins_with("Need"))
+	var saved = Faction.from_dict(p.to_dict())
+	_check("recent purchases are saved", saved.bought.size() == p.bought.size())
+	# The AI buys the same way when short
+	var ai: Faction = c.factions["guild"]
+	ai.materials = 0.0
+	ai.wealth = 400.0
+	ai.ai._think_buy(c)
+	_check("the AI buys materials when short", ai.materials > 0.0 and ai.wealth < 400.0)
+	# A waiting task says so once, and doesn't pause the game
+	var kinds = []
+	c.event.connect(func(text, kind): if "is waiting" in text: kinds.append(kind))
+	var home: District = c.districts[p.home_id]
+	home.development = 0.5
+	p.materials = 50.0
+	p.manpower = 20.0
+	var q = c._new_person(me, "Test", 30, "m")
+	q.post = "quartermaster"
+	c.assign_task(me, "rebuild", home, q.id)
+	var t = c.task_of(q)
+	p.materials = 0.0
+	c.ventures = c.ventures.filter(func(v): return v.leader_id != q.id)
+	c._continue_task(t)
+	p.materials = 3.0
+	c._continue_task(t)
+	_check("a waiting task says so once, without pausing", kinds.size() == 1 and kinds[0] != "alert", str(kinds))
+	# The player hears once when a war could end
+	var peace_news = []
+	c.event.connect(func(text, kind): if "would accept peace" in text: peace_news.append(kind))
+	c.start_war(me, "rust_dogs")
+	var r = c.relation(me, "rust_dogs")
+	r.war_start_day = c.day - 60
+	r.exhaustion[me] = 50.0
+	r.exhaustion["rust_dogs"] = 60.0
+	c._simulate_relations()
+	c._simulate_relations()
+	_check("you're told once when they'd accept peace", peace_news.size() == 1, str(peace_news))
+
+# Doc 15, P1: the balance of force sets the odds of raids and assaults; districts defend themselves
+func _test_force():
+	_check("even force is a coin flip", absf(CityMap.force_odds(1.0) - 0.5) < 0.01)
+	_check("two to one is about 85%", absf(CityMap.force_odds(2.0) - 0.85) < 0.03, str(CityMap.force_odds(2.0)))
+	_check("three to one is about 95%", CityMap.force_odds(3.0) > 0.92, str(CityMap.force_odds(3.0)))
+	var c = _new_city()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	var dogs: Faction = c.factions["rust_dogs"]
+	var their_home: District = c.districts[dogs.home_id]
+	p.scouted[str(their_home.id)] = c.day
+	_check("a home starts with a full garrison", their_home.garrison > 0.0 and absf(their_home.garrison - c.garrison_ceiling(their_home)) < 0.01, str(their_home.garrison))
+	p.manpower = 40.0
+	p.arms = 0.0
+	var small = VentureSystem.compute_odds("assault", p, their_home, c, "rust_dogs", null, 5)
+	var big = VentureSystem.compute_odds("assault", p, their_home, c, "rust_dogs", null, 30)
+	_check("a bigger force has better odds", big["odds"] > small["odds"] + 0.2, "%.2f -> %.2f" % [small["odds"], big["odds"]])
+	_check("the odds name both forces", not big["force"].is_empty() and big["force"]["attack_parts"].size() > 0 and big["force"]["defence_parts"].size() > 0)
+	p.arms = 30.0
+	var armed = VentureSystem.compute_odds("assault", p, their_home, c, "rust_dogs", null, 5)
+	_check("arms make the same crew stronger", armed["force"]["attack"] > small["force"]["attack"])
+	_check("outnumbering them 1.5 to 1 means no disaster", big["force"]["ratio"] < 1.5 or big["tiers"]["disaster"] == 0.0, str(big["force"]["ratio"]))
+	_check("outnumbered, disaster is possible", small["force"]["ratio"] >= 1.5 or small["tiers"]["disaster"] > 0.0)
+	# Twice their force wins about 9 times in 10
+	var crew = 5
+	while VentureSystem.compute_odds("assault", p, their_home, c, "rust_dogs", null, crew)["force"]["ratio"] < 2.0 and crew < 60:
+		crew += 1
+	p.manpower = 80.0
+	var two_to_one = VentureSystem.compute_odds("assault", p, their_home, c, "rust_dogs", null, crew)
+	_check("twice their force: about 85%+ and no disaster", two_to_one["odds"] >= 0.8 and two_to_one["tiers"]["disaster"] == 0.0, "%.2f at crew %d" % [two_to_one["odds"], crew])
+	_check("an assault can take as much crew as you have idle", c.crew_max(me, "assault") == 80 and c.crew_max(me, "raid") == int(GameData.venture("raid")["crew_range"][1]))
+	# The planner sizes a fight to outnumber them 2 to 1
+	var plan = c.recommended_plan(me, "assault", their_home, null)
+	_check("the plan aims to outnumber them 2 to 1", plan["crew"] >= crew - 1, "%d (needed %d)" % [plan["crew"], crew])
+	# Garrisons: knocked down, then rebuilt from the district's people before they join your manpower
+	var home: District = c.districts[p.home_id]
+	var full = home.garrison
+	home.garrison = 0.0
+	var recruits_before = c.district_income(home)["recruits"]
+	var left = c._update_garrison(home, recruits_before)
+	_check("a depleted garrison refills first from the district's recruits", home.garrison > 0.0 and left < recruits_before + 0.0001, "%.2f -> %.2f" % [recruits_before, left])
+	for i in 200:
+		c._update_garrison(home, 0.0)
+	_check("a garrison recovers by itself over time", absf(home.garrison - full) < 0.5, "%.1f of %.1f" % [home.garrison, full])
+	var saved = District.new(0, "x", PackedVector2Array())
+	saved.load_dict(home.to_dict())
+	_check("garrisons are saved", saved.garrison == home.garrison)
+	# Playtest: at war, Assault was offered on a district the player owned where the enemy kept a share
+	c.start_war(me, "rust_dogs")
+	home.influence.clear()
+	home.add_influence(me, 75.0)
+	home.add_influence("rust_dogs", 25.0)
+	_check("you can't assault a district you own", c.check_launch(me, "assault", home).begins_with("Already yours"), c.check_launch(me, "assault", home))
+	# Playtest: four Rebuild tasks emptied the stores. A task's run costs half, and leaves a reserve
+	var full_cost: float = GameData.venture("rebuild")["cost"]["materials"]
+	_check("a task's run costs less than a one-off", c.venture_cost("rebuild", 0, true)["materials"] < full_cost)
+	p.materials = c.venture_cost("rebuild", 0, true)["materials"] + 5.0
+	home.development = 0.5
+	_check("tasks keep a reserve of materials for your own plans", c.check_launch(me, "rebuild", home, -2, -1, 0, true).begins_with("Keeping"), c.check_launch(me, "rebuild", home, -2, -1, 0, true))
 
 # Defence you can see, guards that matter, and first contact
 func _test_defence():
@@ -843,12 +1461,17 @@ func _test_defence():
 	_check("a district next to raiders can be reinforced", c.check_launch(me, "reinforce", between, -2, -1, 0, true) == "", c.check_launch(me, "reinforce", between, -2, -1, 0, true))
 	dogs.arms = 20.0
 	dogs.supplies = 50.0
+	_check("a quiet threat needs a councillor's standing guard", c.check_launch(me, "reinforce", between).begins_with("Assign a councillor"))
+	dogs.manpower = 20.0
+	var raid_err = c.launch_venture("rust_dogs", "raid", between)
+	_check("under attack, any free captain can guard once", raid_err == "" and c.check_launch(me, "reinforce", between) == "", raid_err + c.check_launch(me, "reinforce", between))
+	c.ventures = c.ventures.filter(func(v): return v.faction_id != "rust_dogs")
 	var before = VentureSystem.compute_odds("raid", dogs, between, c, me)["odds"]
 	var days_before = c.venture_days("raid", null, between)
 	c.launch_venture(me, "reinforce", between, -2, 8, 0, true)
 	var after = VentureSystem.compute_odds("raid", dogs, between, c, me)
 	_check("defenders on guard cut raid odds", after["odds"] < before * 0.7, "%.2f -> %.2f" % [before, after["odds"]])
-	_check("defenders show as a named factor", after["factors"].any(func(f): return str(f[0]).ends_with("defenders on guard")))
+	_check("guards show in the defence force", after["force"]["defence_parts"].any(func(f): return str(f[0]).ends_with("guards posted")))
 	_check("attacks on a guarded district take longer", c.venture_days("raid", null, between) > days_before)
 	# First contact is announced once
 	var met = []

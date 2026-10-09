@@ -36,11 +36,22 @@ door, Scavenge them and Settle them. Settlers stay for good. Rebuild raises what
 
 **Neighbours:** four great factions and six minor ones (raiders, traders, hermits). Raiders take your food and
 materials: watch the alerts, arm up, Reinforce threatened districts, or make a deal. Right-click another faction's land
-or leader for diplomacy: gifts, trade, pacts, alliances, vassals, war.
+or leader for diplomacy: gifts, trade, pacts, alliances, tribute, matches between families.
 
-**Your dynasty:** your leader has a family, a nature and a reign; children come of age at 16. Name an heir, keep the
-council loyal, and watch the succession: when a leader dies, a disloyal or ambitious councillor may contest it and
-split the faction in civil war. Click any portrait to open that person; right-click for what you can do with them.
+**Fights are decided by strength:** a raid or assault weighs your crew, their arms and their leader against the
+district's garrison, guards and walls (outnumber them 1.5 to 1 and it can't end in disaster). Every district you hold
+has a garrison that refills from its people. Short of materials or arms? Buy them with wealth (Economy window).
+
+**War needs a reason:** justify a war goal on a neighbour's card (claim a district, make them your tributary, or absorb
+them). It takes months, and they see it coming; then an ultimatum: they give in, or it's war over that goal, won on
+war score. Ask other factions to back your claim, or send the ultimatum early if you're strong enough.
+
+**Your dynasty:** your leader has a family, a nature and a reign. At 6 you choose who raises each child (school, a
+tutor, or the parents); at 16 their leanings settle into traits; from 18 you choose who they marry. Grant land to a
+family member or loyal captain to found a house: it keeps a share of the income, fights when asked, and may break away
+if neglected. Name an heir, keep the council loyal, and watch the succession: a disloyal councillor or house head may
+contest it and split the faction in civil war. Click any portrait to open that person; right-click for what you can do
+with them.
 
 **Hover anything** for how it works. Tabs, window titles and every number explain themselves.
 
@@ -67,6 +78,7 @@ Claude Code commands wrap these: `/test`, `/sim`, `/render`, `/design-check`, `/
 | `data/council.json` | Council seats, loyalty reasons, character traits |
 | `data/traits.json` | Faction traits: threshold, odds modifiers, effects, likes and dislikes |
 | `data/diplomacy.json`, `opinion_modifiers.json` | Diplomatic actions; named opinion memories |
+| `data/war_goals.json` | War goals: cost, time to justify, war-score price, how readily each is accepted |
 | `data/map.json`, `district_types.json` | The generated city layout; district type stats and art |
 | `data/deeds.json`, `national_ambitions.json` | Deeds (milestones that pay renown); National Ambitions |
 | `data/governments.json`, `names.json` | Governments, their succession rules and reforms; name pools |
@@ -90,9 +102,9 @@ made of existing blocks needs no code; typos show at startup (`GameData.validate
 | `tools/`, `tests/` | Map generator, balance sim, UI smoke, screenshots; regression tests |
 
 ## Known gaps
-- Marriage, childhood and education, traits that grow with use, tech: see `../Steering/08-spine.md`
+- Claims through blood, traits that grow with use, council work as passive rates (P3), tech: see `../Steering/08-spine.md`
 - Map art is procedural placeholder quality
 - One save slot; saves from older builds aren't migrated when the format changes
 - Under full fog, the log still reports rivals' actions you can't see
-- One faction occasionally snowballs; coalitions come in spine stage S6
+- One faction sometimes swallows its neighbours; coalitions come in spine stage S6
 - Balance numbers are first-pass

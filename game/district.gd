@@ -19,6 +19,11 @@ var hazard: float = 0.15
 var raid_safe_until: int = 0
 # The faction that was last paid renown for restoring this district ("" if nobody yet): paid once per owner
 var restored_by: String = ""
+# The fight the district puts up with nobody posted (doc 15): grows from its people toward a ceiling set by
+# population and control, is knocked down by attacks, and recovers over the following weeks
+var garrison: float = 0.0
+# The house that holds this district inside its owner's faction (doc 16, H2), or -1
+var house_id: int = -1
 
 # Map shape
 var polygon: PackedVector2Array
@@ -38,7 +43,7 @@ var buildings: Array[String] = []
 
 # Effects buildings can declare (see effects in data/buildings.json)
 const BUILDING_EFFECTS = ["defence_mult", "grievance_daily", "growth_mult", "wealth_daily", "supplies_daily", "materials_daily",
-	"ruin_daily", "crew_cap", "recruit_mult", "development_daily", "trade_income"]
+	"ruin_daily", "crew_cap", "recruit_mult", "development_daily", "trade_income", "school"]
 
 # Combined value of a named effect across this district's buildings.
 # Effects ending in "_mult" multiply together (default 1.0); others add up (default 0.0).
@@ -106,7 +111,7 @@ func to_dict() -> Dictionary:
 	return {
 		"influence": influence.duplicate(), "population": population, "grievance": grievance,
 		"ruin_level": ruin_level, "development": development, "unrest_warned": unrest_warned,
-		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard, "raid_safe_until": raid_safe_until, "restored_by": restored_by,
+		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard, "raid_safe_until": raid_safe_until, "restored_by": restored_by, "garrison": garrison, "house_id": house_id,
 	}
 
 func load_dict(data: Dictionary):
@@ -121,3 +126,5 @@ func load_dict(data: Dictionary):
 	hazard = data["hazard"]
 	raid_safe_until = data["raid_safe_until"]
 	restored_by = data["restored_by"]
+	garrison = data["garrison"]
+	house_id = int(data["house_id"])

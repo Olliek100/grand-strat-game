@@ -40,9 +40,9 @@
 		"min_opinion": 20
 	},
 	"vassalage": {
-		"label": "Demand vassalage",
-		"proposal": "that you become their vassal",
-		"description": "A much weaker faction (under 40% of your strength) accepts your protection: it pays you 20% of its income and joins your wars. Factions that don't feel threatened value their independence.",
+		"label": "Demand submission",
+		"proposal": "that you become their tributary",
+		"description": "A much weaker faction (under 40% of your strength) accepts your protection and becomes your tributary: it pays you 20% of its food, materials and wealth, makes no diplomacy but trade, starts no wars, and joins yours with half its force. Factions that don't feel threatened value their independence.",
 		"kind": "treaty",
 		"treaty": "vassal",
 		"cost": {"wealth": 20},
@@ -50,8 +50,8 @@
 		"base": 0.25
 	},
 	"integrate": {
-		"label": "Integrate vassal",
-		"description": "Merge a loyal vassal of at least a year into your faction: its land, crew and stores become yours. Costs more for bigger vassals.",
+		"label": "Vassalize tributary",
+		"description": "Take a loyal tributary of at least a year into your faction: its land, people and stores become yours. Costs more for bigger tributaries.",
 		"kind": "integrate",
 		"cost": {"wealth": 60},
 		"cost_per_district": {"wealth": 20},
@@ -59,9 +59,29 @@
 		"base": 0.7,
 		"min_opinion": 50
 	},
+	"match": {
+		"label": "Propose a match",
+		"proposal": "a match between your families (one of yours would marry into theirs and leave you)",
+		"description": "One of your unmarried grown family marries one of theirs (family or a house), who joins your family. While both live the families are bound: each side thinks better of the other (+20), pacts, alliances and backing come easier, and pressing a claim on them breaks your word.",
+		"kind": "treaty",
+		"treaty": "marriage",
+		"cost": {"wealth": 20},
+		"days": 10,
+		"base": 0.4
+	},
+	"backing": {
+		"label": "Ask them to back your claim",
+		"proposal": "that you back the claim they're pressing (see their card)",
+		"description": "Ask them to stand behind the claim you're pressing. If they agree, their strength counts with yours: the target is likelier to give in, you can send the ultimatum sooner, and they join the war if it comes. Likelier if they like you, dislike your target, or are your ally.",
+		"kind": "treaty",
+		"treaty": "backing",
+		"cost": {"wealth": 15},
+		"days": 8,
+		"base": 0.45
+	},
 	"tribute": {
 		"label": "Pay tribute",
-		"description": "Hand over food or materials (whichever you can better spare) and they leave you alone for 60 days. They always take it. Only for a faction that raided you or demanded tribute in the last 90 days; the price grows with their strength.",
+		"description": "Hand over food or materials (whichever you can better spare) and they leave you alone for 60 days. They always take it. Raid or attack them while it holds and the deal is off. Only for a faction that raided you or demanded tribute in the last 90 days; the price grows with their strength.",
 		"kind": "tribute",
 		"cost": {},
 		"tribute_base": 10,
