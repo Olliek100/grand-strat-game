@@ -2,6 +2,18 @@
 
 What each build changed, its tuning numbers and simulation results, newest first. Design decisions that still stand are in Steering/04-decision-log.md. From v1.38 on, each build is a git tag.
 
+**2026-10-10 (v1.43, AI wars end by peace; pause counter and seeded sim)**
+
+- **In play:** two AI factions at war can now make peace with each other. Before, each offered and then overwrote the other's offer, so AI wars ended only by war score or collapse. A standing offer now stays until the war ends; you are still offered peace once per war.
+- **Tooling:** `/sim` counts what would stop your clock (alerts, news, choice events, proposals, tasks) by cause; `--seed N` makes a run repeatable; a `WARS` line and a working marriages count. Details in the three entries below.
+- **Result (30 games: seeds 100-500, 6 games x 4 years each):** wars ended by peace 41-67 a seed (was 11 in the one seed compared, now 41 in the same seed); wars still on at the end 7-21 a seed (was 42 in 6 games); ended wars last 133-151 days. Civil wars 0-3 a game; raids 9-43; claims 9-26; wars declared 1-9; cadet houses 2-12; marriages 14-31; factions left 2-8; largest faction 12-51. Stops: about 35 a game year (12 a game minute at speed 2), 39 on the seed-100 comparison. New reference ranges are in the 2026-10-10 entry below.
+- **Open issues:**
+  - Starving days run 33-304 a seed and broke days 0-59: two seeds are noticeably worse (the small-faction weakness again).
+  - Largest faction reaches 51 districts in some games (consolidation, spine S6).
+  - Speed not re-measured (35-48 ms a day in single runs).
+  - AI-vs-AI peace now works, so war-related numbers from older builds aren't comparable.
+- Saves from v1.42 still load (save version unchanged at 16).
+
 **2026-10-10 (new `/sim` reference ranges after the peace fix)**
 
 Measured on v1.42 plus the peace fix: seeds 100, 200, 300, 400, 500, 6 games of 4 years each (30 games). These replace the v1.42 release-run ranges when `/sim` results are compared; run with `--seed` to compare like with like. Range is the lowest to highest single game (median in brackets); nothing was retuned.

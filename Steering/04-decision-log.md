@@ -2,6 +2,12 @@
 
 Decisions that still stand: each with what was rejected and why. New entries go at the top. Check this before relitigating a settled question. Per-build detail (numbers, tuning, simulation results) is in /CHANGELOG.md.
 
+**2026-10-10 (peace offers, and how /sim is read)**
+
+- **A standing peace offer is kept until the war ends; neither side can replace it.** Rejected: letting the latest offer win (two willing AIs overwrote each other for ever, so AI wars never ended by peace and the player was re-alerted daily).
+- **Compare `/sim` runs by seed** (`--seed N`), against the reference ranges in the 2026-10-10 changelog entry (30 games), not the old release-run ranges, which came from unseeded runs and were narrower than the real spread.
+- **Stops are measured, not estimated:** about 35 a game year (v1.42 + this fix, AI plays the player). The audit's 60-100 was too high; task housekeeping, hostile actions against you, and news/choice events are the biggest causes.
+
 **2026-10-09 (houses and marriage; see 16-houses-and-marriage.md; built with the doc's recommended answers after the owner's "build it")**
 
 - **Grown family members marry through a choice event** ("A Match": a captain, someone from the people, a house, or not yet), and a family is capped at 16 living members. Rejected: automatic matches with a notice.

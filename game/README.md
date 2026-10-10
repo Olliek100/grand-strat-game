@@ -62,7 +62,7 @@ Godot 4.7.2, GDScript; the UI is built in code (`main.gd`), content is JSON in `
 |---|---|
 | Regression tests | `godot --headless --path . --script res://tests/spine_test.gd` |
 | UI smoke test | `godot --path . res://tools/ui_smoke.tscn` (prints `UI SMOKE OK`) |
-| Balance simulation | `godot --headless --path . --script res://tools/balance_sim.gd -- [runs] [years]` |
+| Balance simulation | `godot --headless --path . --script res://tools/balance_sim.gd -- [runs] [years] [--seed N] [--answer] [--idle]` |
 | Screenshots | `godot --path . res://tools/render_shot.tscn -- <out_dir> [scenario[@days] ...]` |
 | New city map | `godot --headless --path . --script res://tools/generate_map.gd -- [seed]` |
 
