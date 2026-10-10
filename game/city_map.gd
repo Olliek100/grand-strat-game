@@ -41,6 +41,8 @@ var missions: Array[DiplomaticMission] = []
 var proposals: Array = []
 # Factions whose first demand for tribute has already been shown as a pop-up
 var demand_warned: Array = []
+# Sim harness only (not saved): counts what would stop the player's clock, see tools/balance_sim.gd
+var stop_sink = null
 # is_raider() answers, kept for the current day (not saved)
 var raider_cache: Dictionary = {}
 var raider_cache_day: int = -1
@@ -55,11 +57,15 @@ var rng := RandomNumberGenerator.new()
 var player_id: String = ""
 var player_defeated: bool = false
 
-# Pass a dictionary from to_save() to restore a saved game; otherwise starts data/scenario.json
-func _init(save_data: Dictionary = {}):
+# Pass a dictionary from to_save() to restore a saved game; otherwise starts data/scenario.json.
+# A seed (sim and tests only) makes a new game repeatable; without one every game is random
+func _init(save_data: Dictionary = {}, seed_value: int = -1):
 	_load_layout()
 	if save_data.is_empty():
-		rng.randomize()
+		if seed_value >= 0:
+			rng.seed = seed_value
+		else:
+			rng.randomize()
 		_randomize_district_stats()
 		_setup_scenario(GameData.scenario())
 	else:
@@ -443,7 +449,12 @@ func proposal_between(from_id: String, to_id: String) -> int:
 			return i
 	return -1
 
+func _stop(category: String, cause: String):
+	if stop_sink != null:
+		stop_sink.note(category, cause)
+
 func add_proposal(action_id: String, from_id: String):
+	_stop("proposal", action_id)
 	proposals.append({"action": action_id, "from": from_id, "expires_day": day + int(GameData.rule("proposal_expiry_days"))})
 	if GameData.diplomacy_action(action_id)["kind"] == "demand":
 		var price = Diplomacy._amount_text(Diplomacy.tribute_price(self, player_id, from_id))
@@ -468,6 +479,7 @@ func answer_proposal(index: int, accept: bool, expired: bool = false):
 		return
 	var p = proposals[index]
 	proposals.remove_at(index)
+	_stop("proposal_expired" if expired else "proposal_answered", p["action"])
 	if not factions.has(p["from"]):
 		return
 	# An ultimatum: give in, or it's war (a lapsed one is refused)
@@ -599,7 +611,9 @@ func make_peace(faction_id: String, target_id: String) -> String:
 
 func offer_peace(faction_id: String, target_id: String):
 	var r = relation(faction_id, target_id)
-	if not r.at_war or r.peace_offered_by == faction_id:
+	# A standing offer (theirs or yours) is kept until the war ends: a second one must not replace it,
+	# or two sides who both want peace overwrite each other for ever and neither can accept
+	if not r.at_war or r.peace_offered_by != "":
 		return
 	r.peace_offered_by = faction_id
 	if target_id == player_id:
@@ -844,11 +858,15 @@ func _send_ultimatum(r: Relation):
 	r.claim["stage"] = "ultimatum"
 	r.claim["deadline"] = day + int(GameData.rule("ultimatum_days"))
 	var demand = String(GameData.war_goal(r.claim["goal"])["demand"]).replace("{district}", districts[int(r.claim["district"])].district_name if int(r.claim["district"]) >= 0 else "")
+	if against == player_id:
+		_stop("proposal", "ultimatum")
 	if against == player_id and factions[against].ai == null:
 		proposals.append({"action": "ultimatum", "from": by, "expires_day": r.claim["deadline"]})
 		major_event.emit("Ultimatum from the %s" % faction_name(by), "The %s demand that you %s. Accept and it's done, with no fight. Refuse, or let %d days pass, and it's war over it.\n\nAnswer in Diplomacy (F4), Proposals." % [
 			faction_name(by), demand, GameData.rule("ultimatum_days")], by)
 		return
+	if against == player_id:
+		_stop("proposal_answered", "ultimatum")
 	answer_ultimatum(r, rng.randf() < ultimatum_acceptance(r))
 
 func answer_ultimatum(r: Relation, accept: bool):
@@ -1819,6 +1837,8 @@ func wound_days(def: Dictionary) -> Array:
 func _wound(leader: Character, def: Dictionary) -> String:
 	var days_range: Array = wound_days(def)
 	var days = rng.randi_range(int(days_range[0]), int(days_range[1]))
+	if leader.faction_id == player_id and leader.post != "":
+		_stop("task", "councillor_wounded")
 	leader.wounded_until = day + days
 	leader.wounds += 1
 	leader.change_loyalty(-6.0, "wounded_in_service")
@@ -1879,6 +1899,7 @@ func _character_died(c: Character, fate: String):
 	for other in characters_of(c.faction_id):
 		other.change_loyalty(-4.0, "comrade_lost")
 	if c.post != "" and c.faction_id == player_id:
+		_stop("task", "councillor_died")
 		event.emit("Your %s seat is empty now that %s is dead. Appoint someone in the Council window (F2)." % [
 			GameData.council_post(c.post)["label"], c.name], "alert")
 	if was_leader:
@@ -3782,6 +3803,8 @@ func _fire_moment(faction_id: String, moment: String, subject: Character, ventur
 			break
 	f.event_last[chosen] = day
 	f.next_event_day = day + rng.randi_range(EVENT_PULSE_DAYS[0], EVENT_PULSE_DAYS[1])
+	if faction_id == player_id:
+		_stop("choice", moment)
 	var entry = {"event": chosen, "subject": subject.name if subject else "", "subject_id": subject.id if subject else -1, "venture": venture_id}
 	if moment == "childhood":
 		subject.childhood.append(chosen)
@@ -4109,12 +4132,15 @@ func _continue_task(t: StandingTask):
 	var c = character_by_id(t.character_id)
 	var d: District = districts[t.district_id]
 	if f == null or c == null or c.faction_id != t.faction_id:
+		_stop_task_end(t, "councillor_gone")
 		_end_task(t, "%s is gone" % (c.name if c else "the councillor"), true)
 		return
 	if c.post == "":
+		_stop_task_end(t, "left_council")
 		_end_task(t, "%s left the council" % c.name, true)
 		return
 	if d.owner_id() != t.faction_id:
+		_stop_task_end(t, "district_lost")
 		_end_task(t, "%s was lost" % d.district_name, true)
 		return
 	if t.stopping:
@@ -4122,6 +4148,7 @@ func _continue_task(t: StandingTask):
 		return
 	var done = task_done_reason(t.faction_id, t.venture_id, d)
 	if done != "":
+		_stop_task_end(t, "completed")
 		_end_task(t, done, true)
 		return
 	if c.is_wounded(day):
@@ -4131,12 +4158,17 @@ func _continue_task(t: StandingTask):
 	if err != "":
 		# Said once when it starts waiting (the outliner keeps the reason up to date); news, not a reason to pause
 		if t.paused == "" and t.faction_id == player_id:
+			_stop("task_waiting", err)
 			event.emit("%s's %s in %s is waiting: %s." % [c.name, GameData.venture(t.venture_id)["label"], d.district_name, err.to_lower()], "bad")
 		t.paused = err
 		return
 	t.paused = ""
 	launch_venture(t.faction_id, t.venture_id, d, c.id, t.crew, 0, true)
 	t.runs += 1
+
+func _stop_task_end(t: StandingTask, cause: String):
+	if t.faction_id == player_id:
+		_stop("task", cause)
 
 # The task ends: done (the councillor is free at once) or stopped (free once the commitment has passed)
 func _end_task(t: StandingTask, why: String, natural: bool):

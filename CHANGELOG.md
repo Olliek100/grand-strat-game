@@ -2,6 +2,36 @@
 
 What each build changed, its tuning numbers and simulation results, newest first. Design decisions that still stand are in Steering/04-decision-log.md. From v1.38 on, each build is a git tag.
 
+**2026-10-10 (new `/sim` reference ranges after the peace fix)**
+
+Measured on v1.42 plus the peace fix: seeds 100, 200, 300, 400, 500, 6 games of 4 years each (30 games). These replace the v1.42 release-run ranges when `/sim` results are compared; run with `--seed` to compare like with like. Range is the lowest to highest single game (median in brackets); nothing was retuned.
+- **Raids** 9-43 (23). **Claims** 9-26 (17), of which **given in without a war** 6-20 (12). **Wars declared** 1-9 (6). **Civil wars** 0-3 a game (1); 0.3-0.8 averaged per seed.
+- **Cadet houses** 2-12 (7). **Ambitions** 13-35 (23). **Reforms** 4-11 (8). **Successions** 3-16 (9).
+- **Factions left** 2-8 (4). **Largest faction** 12-51 districts (28).
+- **Wars** (per seed of 6 games): 59-91 started, 48-76 ended, 41-67 of those by peace, 7-21 still on at the end; average length of the ended 133-151 days.
+- **Hunger and money** (per seed of 6 games): starving days 33-304, broke days 0-59. Two seeds are hungry or broke noticeably more than the rest; the small factions' known weakness, not new.
+- **Not measured:** ms a day (five sims ran together; the earlier single-seed runs gave 35-48). The "marriages" counter was reading 0-2 a game because its search text matched only some log lines; it now counts every new married couple in the sim loop (14-31 a game, median 21, over the same 30 games; every other number in the run came out identical).
+
+**2026-10-09 (peace-offer fix and `/sim --seed`)**
+
+- **Bug:** a standing peace offer was replaced by the other side's. Each AI offers first and then looks for the other side's offer, so it always found its own, and two AI factions that both wanted peace never made it. Wars between AIs ended only by war score or collapse. It also re-alerted a player run by the AI every day (about 140 a year in the sim). Confirmed with a probe: two willing AI factions, 120 days at war, no peace.
+- **Fix:** `offer_peace` keeps any standing offer until the war ends; a second one from either side does nothing. A human player is still offered peace once per war, with the same alert. Removed the stops counter's workaround for the repeats.
+- **Test:** `_test_mutual_peace` (an offer isn't replaced; two willing AIs end it within 30 days, with or without an earlier offer; the player is told once).
+- **`/sim --seed N`:** game r (from 0) is seeded N + r through a new optional argument of `CityMap`; the real game still randomises, and nothing saved changes (no `SAVE_VERSION` bump). The seed is printed at the top (random and printed if none is given). The same seed gave the same report twice (checked on 2 games of 1 year: events, wars, summary).
+- **New in the report:** `WARS` line: started, ended, ended by peace, still on at the end, average length.
+- **Before/after, seed 100, 6 games x 4 years (default mode):** wars ended by peace 11 -> 41; wars still on at the end 42 -> 11; wars ended 28 -> 48; average length of the ended 132 -> 143 days (more of the long ones now end). Stops a year 45 -> 39 (alerts 13.5 -> 9.8). Civil wars 0.3, largest faction 39, nobody broke; starving days 140 -> 56; 35-48 ms a day in both.
+- **Targets:** spine tests all pass (P1 force odds, P2 claim and ultimatum before war). Sim ranges for the old release run (wars 3-5, claims 10-16, factions left 2-4, largest 24-48) are exceeded or shifted on this seed in both before and after (claims 14-31, wars 4-9, factions left 3-7, largest 17-39), so the shift is the seed, not the fix. Nothing retuned.
+
+**2026-10-09 (v1.42 + pause counter, measurement only)**
+
+`/sim` now counts what would stop the player's clock. No gameplay, balance, save or target-check change.
+- **How:** `CityMap` has a `stop_sink` (empty in the game, not saved) that the sim fills in; about a dozen one-line calls mark where a stop starts (choice events, proposals and their answer/expiry, tasks ending or waiting, a councillor hurt or killed). Alerts and news pop-ups are read from the existing `event` / `major_event` signals and tagged by wording; what no tag matches is `other_alert`. Counting reads no random numbers.
+- **Run it:** `tools/balance_sim.gd -- [runs] [years] [--answer] [--idle]`. Default: AI plays the player, proposals lapse unanswered. `--answer`: AI plays the player and every proposal is accepted at once (the baseline mode). `--idle`: no AI for the player; every choice event gets its first valid option (the player starves, so the counts are low and not realistic).
+- **Report:** stops per game year by category and cause, per game minute at speed 2, different stop-days a year, own-act stops, repeats within 10 days, the busiest 3 years.
+- **Merged on purpose:** an alert and its pop-up for the same news count once; proposals count where they are posted, not as alerts too.
+- **Found while measuring:** when the AI also plays the player's side, its peace offers and the enemy's overwrite each other every day, so the player is re-alerted daily (about 140 a year). A human is offered once per war, so only the first is counted. The same overwrite probably stops two AI factions from ever accepting each other's offers. Not fixed here.
+- **Baseline, v1.42 (`--answer`, 8 games x 4 years):** 35 stops a game year, 12 a game minute at speed 2, on 30 different days. Alerts 11 (raids and threats on you 4.2), news pop-ups 4.8, choice events 4.3 (everyday 2.5), proposals 3.5, task events 7.3 (finished 6.1), tasks waiting 4.4 (mostly "keeping materials in reserve"). 16% repeat within 10 days. Busiest years 69-81.
+
 **2026-10-09 (v1.42, education, strength and war, houses and marriage)**
 
 Six parts, built and playtested one after another since v1.41 (details below, newest first):

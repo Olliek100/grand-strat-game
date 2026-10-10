@@ -12,6 +12,7 @@ func _init():
 	_test_determinism()
 	_test_save_file()
 	_test_ai_diplomacy()
+	_test_mutual_peace()
 	_test_treaties()
 	_test_memories_and_deeds()
 	_test_leaders_and_tiers()
@@ -247,6 +248,40 @@ func _test_ai_diplomacy():
 		if not r.involves(c.player_id) and (r.trade or r.pact or r.alliance or r.at_war or r.truce_until_day > 90):
 			interacted = true
 	_check("AI factions make treaties or war with each other", interacted)
+
+# Two AI factions that both want peace must reach it: a standing offer isn't overwritten by the other side's
+func _test_mutual_peace():
+	var c = _new_city()
+	var a = "rival"
+	var b = "commune"
+	c.start_war(a, b)
+	var r = c.relation(a, b)
+	r.war_start_day = c.day - 200
+	c.offer_peace(a, b)
+	c.offer_peace(b, a)
+	_check("a standing peace offer isn't replaced by the other side's", r.peace_offered_by == a, r.peace_offered_by)
+	var days = 0
+	while r.at_war and days < 30:
+		c.advance_day()
+		days += 1
+	_check("two AI factions at war, both willing, end it by peace within 30 days", not r.at_war, "still at war after %d days" % days)
+	var c2 = _new_city()
+	c2.start_war(a, b)
+	var r2 = c2.relation(a, b)
+	r2.war_start_day = c2.day - 200
+	days = 0
+	while r2.at_war and days < 30:
+		c2.advance_day()
+		days += 1
+	_check("the same when neither has offered yet", not r2.at_war, "still at war after %d days" % days)
+	var c3 = _new_city()
+	c3.start_war(a, c3.player_id)
+	var told = []
+	c3.event.connect(func(text, _kind): if text.contains("offer peace"): told.append(text))
+	for i in 5:
+		c3.offer_peace(a, c3.player_id)
+		c3.offer_peace(c3.player_id, a)
+	_check("the player is offered peace once per war", told.size() == 1, str(told.size()))
 
 func _test_treaties():
 	var c = _new_city()
