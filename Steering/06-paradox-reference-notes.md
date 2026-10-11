@@ -89,3 +89,25 @@ Looked at CK2/CK3 events, activities, education/childhood, lifestyles and levele
 3. **Characters:** traits with opposites and same/opposite opinion; succession as "who succeeds" plus "what happens to holdings".
 4. **Collapse:** internal factions with discontent, power, a threshold, a telegraphed demand, then civil war.
 5. **Crises:** story cycles with visible progress and triggered events with weighted options.
+
+## Restraints on asking, aggression and pile-ons (2026-10-11, for doc 18)
+
+Read from CK3 (character interactions, AI defines), HOI4 (defines) and a skim of CK2 (defines). Patterns only; nothing copied. Prompted by a playtest where five factions that all liked the player backed two claims against them, the AI having asked each repeatedly until it got a yes.
+
+**1. One ask per pair per long while (CK3).** Almost every interaction carries a cooldown against the same recipient, usually 3-10 years, sometimes 15-25; a few carry a plain cooldown of months to years. The AI also tries each kind of interaction only every several years (frequency set by tier), from a short list of sensible targets, not everyone. *Ours: the AI retries every envoy cycle, with no memory of a refusal.*
+
+**2. The recipient decides on its own stake, with hard blocks.** An ally asked to join a war starts from a modest base and then adds or subtracts: a flat block if the war is of little benefit, if the target is its own family, heir, friend or suzerain, if it is a conqueror (helps nobody but itself), or if it is saving money; softer factors for opinion, shared culture or language, and joining defensive wars more readily. *Ours: backing's only target-side factor is a multiplier on opinion of the target, so liking the target still leaves a real chance of a yes.*
+
+**3. There is no pre-war "back my claim".** In CK3 the other side joins by a standing alliance, once a war exists, by calling; the ask is a call to arms inside a war, not a recruitment drive before one. Vassals and factions act on their own opinions, not on being asked. *Ours: backing is a pre-war recruitment action with no counterpart.*
+
+**4. Saying yes is costly to break, saying no costs little at first.** Refusing a call you are bound to costs the one who refused prestige and costs the caller an opinion hit; alliances themselves are rare, negotiated, and refused with a lasting memory. The AI also won't call a brand-new ally into an old war, nor the player in against their own family.
+
+**5. The caller stops when strong enough.** A setting makes the AI keep calling allies only while it isn't much stronger than the enemy: no piling on for its own sake. HOI4's AI generates at most a couple of extra war goals at once.
+
+**6. Cadence and cost for the aggressor.** CK3's AI has a minimum gap between its own offensive wars and a chance that falls with its penalty for aggression (unless rationality is low or it is a warmonger). HOI4 makes a war goal cost more for each nation already at war or being justified against, takes at least days to justify, builds visible *threat* gradually as it justifies, and raises a world tension meter that other countries react to; guarantees cost more for each one already given.
+
+**7. Policy, not clicks.** CK3's war behaviour is a chosen *stance* (attacker/defender, by relative strength), tasks run for years on the council, and the player acts on a few big levers. The AI's long-running choices are stances and tasks too.
+
+Not read in depth: HOI4's diplomatic AI scripts beyond the defines, and CK2's coalition interaction (only its defines).
+
+**What it suggests for us (to design, not built):** drop pre-war backing in favour of calls to arms inside a war from standing alliances; give every ask a per-pair cooldown and a remembered refusal; give each possible backer stakes and hard blocks (border, family, existing friendship, nothing to gain); cap and cost pile-ons (cost per concurrent war or claim, stop calling when strong enough); keep the claimant's timer binding and visible.

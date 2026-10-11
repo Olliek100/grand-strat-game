@@ -1,6 +1,7 @@
 extends Control
 
 # Real seconds per game day at speeds 1-5 (index 0 unused: that's "paused")
+const PlayLog = preload("res://play_log.gd")
 const SECONDS_PER_DAY = [0.0, 1.0, 0.5, 0.25, 0.1, 0.04]
 const LOG_COLORS = {"info": "#c9c9c9", "good": "#8bd48b", "bad": "#e3876f", "alert": "#ffb347"}
 # Id for dropdown rows that aren't a person ("Appoint...", "No captain is free"). Not -1: Godot turns -1 into the row's index
@@ -176,14 +177,16 @@ func _ready():
 	for problem in GameData.validate():
 		push_error(problem)
 		_log("Data error: " + problem, "bad")
-	_set_city(CityMap.new())
+	_set_city(CityMap.new(), false)
 	_log("You lead the Westgate Crew: one shelter in the west of a dead city, and not much food. The Iron Wardens (militarists), the Canal Guild (merchants) and the Southside Commune (socialists) are out there doing the same.", "info")
 	_log("Space: pause. 1-5: speed. Esc: menu (save, load). F1-F7: windows. Click a district to act there; right-click another faction's land to deal with them.", "info")
 	_log("The icons under the top bar are your problems, worst first: hover to read, click to deal with them, right-click to dismiss.", "info")
 	_log("Start at home: Secure Food, Safeguard the Shelter and Gather Weapons. Once you're fed and secure, Scout the ruins next door, Scavenge them, then Settle.", "info")
 
-func _set_city(new_city: CityMap):
+func _set_city(new_city: CityMap, loaded: bool = true):
 	city = new_city
+	# What happens to your land goes to user://playlog.txt for review (observes only)
+	city.sim_sink = PlayLog.new(city, not loaded)
 	city.event.connect(_on_city_event)
 	city.factions_changed.connect(_rebuild_faction_cards, CONNECT_DEFERRED)
 	city.first_contact.connect(func(fid): _open_faction_panel(fid, Vector2(-1, -1)), CONNECT_DEFERRED)
@@ -1031,8 +1034,8 @@ func _refresh_outliner():
 			var extra = ""
 			if rc.claim["by"] == me and rc.claim["stage"] == "justifying":
 				extra = ", they'd give in %d%%%s" % [city.ultimatum_acceptance(rc) * 100, " [color=#8bd48b](can send now)[/color]" if city.check_send_early(me, fid) == "" else ""]
-			claims.append("[url=f:%s][color=%s]%s[/color][/url] [color=#e3a86f]%s: %s, %s in %dd%s[/color]" % [fid, _hex(fid), city.faction_name(fid),
-				"your claim" if rc.claim["by"] == me else "their claim", city.claim_text(rc, me), "ultimatum" if rc.claim["stage"] == "justifying" else "answer due", days, extra])
+			claims.append("[url=f:%s][color=%s]%s[/color][/url] [color=#e3a86f]%s: %s, %s in %s%s[/color]" % [fid, _hex(fid), city.faction_name(fid),
+				"your claim" if rc.claim["by"] == me else "their claim", city.claim_text(rc, me), "ultimatum" if rc.claim["stage"] == "justifying" else "answer due", city.claim_clock(rc) if rc.claim["stage"] == "justifying" else "%d days" % days, extra])
 	if not claims.is_empty():
 		lines.append("[b][color=#e3a86f]Claims[/color][/b]")
 		lines.append_array(claims)
@@ -1188,9 +1191,9 @@ func _refresh_alerts(economy: Dictionary):
 		if rc.claim.get("by", "") == fid and rc.claim["stage"] == "justifying":
 			var them = fid
 			var days = int(rc.claim["ready_day"]) - city.day
-			list.append(_alert("claim:" + fid, "urgent", "Claim %dd" % days,
-				"The %s are justifying a claim on you: %s%s. Their ultimatum comes in %d days: give in then, or it's war over it.\nMake yourself stronger (arms, guards, allies), or talk to them. Click for diplomacy." % [
-				city.faction_name(fid), city.claim_text(rc, p.id), (" (because %s)" % rc.claim["reason"]) if rc.claim["reason"] != "" else " (with no cause)", days],
+			var earliest = city.claim_notice_left(rc)
+			list.append(_alert("claim:" + fid, "urgent", "Claim %s" % (("%dd" % days) if earliest >= days else ("%d-%dd" % [earliest, days])),
+				city.claim_notice_text(rc, p.id) + "\nGive in then, or it's war over it. Make yourself stronger (arms, guards, allies), or talk to them. Click for diplomacy.",
 				func(): _open_faction_panel(them, Vector2(-1, -1))))
 	if home and home.owner_id() != p.id:
 		list.append(_alert("home_lost", "urgent", "Shelter lost", "You've lost your shelter.", func(): pass))
@@ -2199,7 +2202,7 @@ func _claim_status(r: Relation) -> String:
 		("; backed by " + ", ".join(backers.map(func(fid): return "the " + city.faction_name(fid)))) if not backers.is_empty() else ""]
 	match r.claim["stage"]:
 		"justifying":
-			return "[color=#e3a86f]%s are justifying a claim: %s%s. Ultimatum in %d days.%s[/color]\n" % [who, city.claim_text(r, city.player_id), reason, int(r.claim["ready_day"]) - city.day, odds]
+			return "[color=#e3a86f]%s are justifying a claim: %s%s. Ultimatum in %s.%s[/color]\n" % [who, city.claim_text(r, city.player_id), reason, city.claim_clock(r), odds]
 		"ultimatum":
 			return "[color=#e3a86f]Ultimatum from %s: %s. Answer due in %d days.[/color]\n" % ["you" if by == city.player_id else "the " + city.faction_name(by), city.claim_text(r, city.player_id), int(r.claim["deadline"]) - city.day]
 		"war":

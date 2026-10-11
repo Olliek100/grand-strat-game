@@ -165,6 +165,60 @@ static func _feels_threatened(city: CityMap, faction_id: String) -> bool:
 			return true
 	return false
 
+# --- Asks: a cooldown per pair and action, longer after each refusal (doc 18) ---------------------------
+
+# Tributes answer a demand, absorbing your own tributary is no ask, and a treaty in its renewal window may be renewed
+static func _cooldown_exempt(city: CityMap, action_id: String, from_id: String, to_id: String) -> bool:
+	# A faction absorbed by the deal is gone: asking it again is moot, and no relation may be made for it
+	if not city.factions.has(from_id) or not city.factions.has(to_id):
+		return true
+	var def = GameData.diplomacy_action(action_id)
+	if def["kind"] in ["tribute", "integrate"]:
+		return true
+	var r = city.relation(from_id, to_id)
+	return (action_id == "pact" and r.pact) or (action_id == "alliance" and r.alliance)
+
+# Days the asker must wait before this ask again (0 if free). The AI waits the full time; the player a fraction of it
+static func ask_wait(city: CityMap, action_id: String, from_id: String, to_id: String) -> int:
+	if _cooldown_exempt(city, action_id, from_id, to_id):
+		return 0
+	var entry: Dictionary = city.relation(from_id, to_id).asks.get(from_id + "|" + action_id, {})
+	return maxi(0, int(entry.get("until", 0)) - city.day)
+
+static func ask_cooldown(city: CityMap, action_id: String, from_id: String, refusals: int) -> int:
+	var days = float(GameData.rule("ask_cooldown_days").get(action_id, 0))
+	if from_id == city.player_id:
+		days *= GameData.rule("ask_cooldown_player_mult")
+	return roundi(days * minf(1.0 + refusals, GameData.rule("ask_refusal_max_mult")))
+
+static func _note_ask(city: CityMap, action_id: String, from_id: String, to_id: String):
+	if _cooldown_exempt(city, action_id, from_id, to_id) or not GameData.rule("ask_cooldown_days").has(action_id):
+		return
+	var asks: Dictionary = city.relation(from_id, to_id).asks
+	var key = from_id + "|" + action_id
+	var refusals = int(asks.get(key, {}).get("refusals", 0))
+	asks[key] = {"day": city.day, "until": city.day + ask_cooldown(city, action_id, from_id, refusals), "refusals": refusals}
+
+# The answer was no: they remember it. The wait grows, and asking on after a refusal is held against the asker
+static func note_refusal(city: CityMap, action_id: String, from_id: String, to_id: String):
+	if _cooldown_exempt(city, action_id, from_id, to_id) or not GameData.rule("ask_cooldown_days").has(action_id):
+		return
+	var asks: Dictionary = city.relation(from_id, to_id).asks
+	var key = from_id + "|" + action_id
+	var entry: Dictionary = asks.get(key, {"day": city.day, "until": city.day, "refusals": 0})
+	var refusals = int(entry["refusals"]) + 1
+	if refusals > 1:
+		city.change_opinion(to_id, from_id, -4.0, "pestered")
+	asks[key] = {"day": int(entry["day"]), "until": city.day + ask_cooldown(city, action_id, from_id, refusals), "refusals": refusals}
+
+static func note_accepted(city: CityMap, action_id: String, from_id: String, to_id: String):
+	if not city.factions.has(from_id) or not city.factions.has(to_id):
+		return
+	var asks: Dictionary = city.relation(from_id, to_id).asks
+	var key = from_id + "|" + action_id
+	if asks.has(key):
+		asks[key]["refusals"] = 0
+
 # Returns "" if `from` can start this action toward `to`, otherwise why not.
 # With for_resolution, skips the checks that only matter when sending the envoy.
 static func check_action(city: CityMap, action_id: String, from_id: String, to_id: String, for_resolution: bool = false) -> String:
@@ -178,6 +232,11 @@ static func check_action(city: CityMap, action_id: String, from_id: String, to_i
 			return "An envoy is already on the way"
 		if city.proposal_between(from_id, to_id) >= 0:
 			return "A proposal is already waiting for an answer"
+		var wait = ask_wait(city, action_id, from_id, to_id)
+		if wait > 0:
+			var refusals = int(r.asks.get(from_id + "|" + action_id, {}).get("refusals", 0))
+			var who = "You asked" if from_id == city.player_id else "They asked"
+			return "%s them lately%s: again in %d days" % [who, " and were turned down" + ((" %d times" % refusals) if refusals > 1 else "") if refusals > 0 else "", wait]
 	if def["kind"] != "gift" and r.at_war:
 		return "You're at war (make peace first)"
 	# A tributary's dealings abroad are its suzerain's: it may only trade
@@ -372,6 +431,7 @@ static func start_action(city: CityMap, action_id: String, from_id: String, to_i
 		city.factions[from_id].pay(action_cost(city, action_id, from_id, to_id))
 	if def["kind"] == "demand":
 		city.relation(from_id, to_id).last_demand[from_id] = city.day
+	_note_ask(city, action_id, from_id, to_id)
 	city.missions.append(DiplomaticMission.new(action_id, from_id, to_id, int(def["days"])))
 	city.feed_trait_by_name(city.factions[from_id], "Diplomatic", 2.0)
 	if from_id == city.player_id:
@@ -423,9 +483,12 @@ static func resolve_mission(city: CityMap, m: DiplomaticMission):
 	var chance = acceptance(city, m.action_id, m.from_id, m.to_id)["chance"]
 	if city.rng.randf() < chance:
 		form_treaty(city, m.action_id, m.from_id, m.to_id)
+		note_accepted(city, m.action_id, m.from_id, m.to_id)
 		city.feed_trait_by_name(city.factions[m.from_id], "Diplomatic", 4.0)
-	elif player_involved:
-		city.event.emit("The %s turned down your offer: %s (%d%% chance)." % [city.faction_name(m.to_id), def["label"].to_lower(), chance * 100], "bad")
+	else:
+		note_refusal(city, m.action_id, m.from_id, m.to_id)
+		if player_involved:
+			city.event.emit("The %s turned down your offer: %s (%d%% chance)." % [city.faction_name(m.to_id), def["label"].to_lower(), chance * 100], "bad")
 
 static func form_treaty(city: CityMap, action_id: String, from_id: String, to_id: String):
 	var def = GameData.diplomacy_action(action_id)

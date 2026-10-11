@@ -13,6 +13,7 @@ func _init():
 	_test_save_file()
 	_test_ai_diplomacy()
 	_test_mutual_peace()
+	_test_ask_cooldowns()
 	_test_treaties()
 	_test_memories_and_deeds()
 	_test_leaders_and_tiers()
@@ -282,6 +283,42 @@ func _test_mutual_peace():
 		c3.offer_peace(a, c3.player_id)
 		c3.offer_peace(c3.player_id, a)
 	_check("the player is offered peace once per war", told.size() == 1, str(told.size()))
+
+# Asks: a cooldown per pair and action, longer after each refusal, lighter for the player, and renewals aren't asks (doc 18)
+func _test_ask_cooldowns():
+	var c = _new_city()
+	var me = c.player_id
+	c.factions["rival"].wealth = 500.0
+	var err = Diplomacy.start_action(c, "envoy", "rival", "commune")
+	_check("the first ask goes out", err == "", err)
+	c.missions.clear()
+	var again = Diplomacy.check_action(c, "envoy", "rival", "commune")
+	_check("the same ask to the same faction is held back, with the wait", again.contains("again in"), again)
+	_check("another faction can still be asked", Diplomacy.check_action(c, "envoy", "rival", "guild") == "" or not Diplomacy.check_action(c, "envoy", "rival", "guild").contains("again in"))
+	_check("a different ask to the same faction isn't held back", not Diplomacy.check_action(c, "trade", "rival", "commune").contains("again in"))
+	var ai_wait = Diplomacy.ask_cooldown(c, "alliance", "rival", 0)
+	var player_wait = Diplomacy.ask_cooldown(c, "alliance", me, 0)
+	_check("the player waits less than the AI", player_wait < ai_wait and player_wait > 0, "%d vs %d" % [player_wait, ai_wait])
+	_check("bigger asks wait longer than gifts", Diplomacy.ask_cooldown(c, "alliance", "rival", 0) > Diplomacy.ask_cooldown(c, "trade", "rival", 0) and Diplomacy.ask_cooldown(c, "trade", "rival", 0) > Diplomacy.ask_cooldown(c, "envoy", "rival", 0))
+	Diplomacy.note_refusal(c, "alliance", "rival", "guild")
+	var once = Diplomacy.ask_wait(c, "alliance", "rival", "guild")
+	Diplomacy.note_refusal(c, "alliance", "rival", "guild")
+	var twice = Diplomacy.ask_wait(c, "alliance", "rival", "guild")
+	_check("each refusal lengthens the wait", twice > once and once > 0, "%d then %d" % [once, twice])
+	_check("asking on after a refusal is held against the asker", c.opinion_of("guild", "rival") < 0.0 or c.relation("guild", "rival").modifiers["guild"].any(func(m): return m["id"] == "pestered"))
+	var r = c.relation("rival", "commune")
+	r.pact = true
+	r.treaty_until_day = c.day + 10
+	r.asks["rival|pact"] = {"day": c.day, "until": c.day + 500, "refusals": 0}
+	_check("renewing a pact in its window isn't held back by the cooldown", not Diplomacy.check_action(c, "pact", "rival", "commune").contains("again in"), Diplomacy.check_action(c, "pact", "rival", "commune"))
+	# A deal that absorbs a faction must not leave a relation behind for it
+	var gone = _new_city()
+	var before = gone.relations.size()
+	gone.retire_faction("tunnel_rats", "rival")
+	var after_retire = gone.relations.size()
+	Diplomacy.note_accepted(gone, "vassalage", "rival", "tunnel_rats")
+	Diplomacy.note_refusal(gone, "vassalage", "rival", "tunnel_rats")
+	_check("asks to a faction that is gone leave no relation behind", gone.relations.size() == after_retire, "%d -> %d" % [after_retire, gone.relations.size()])
 
 func _test_treaties():
 	var c = _new_city()
@@ -1301,6 +1338,9 @@ func _test_war_goals():
 	c9.factions[me9].wealth = 500.0
 	c9.justify(me9, dogs, "vassalize")
 	var r9 = c9.relation(me9, dogs)
+	_check("a new claim can't go early: the notice runs first", c9.check_send_early(me9, dogs).begins_with("The notice runs"), c9.check_send_early(me9, dogs))
+	_check("the claim notice says earliest, latest and the backers", c9.claim_notice_text(r9, dogs).contains("Backers"))
+	c9.day += int(GameData.rule("min_claim_notice_days"))
 	c9.factions[me9].manpower = 0.0
 	c9.factions[dogs].manpower = 100.0
 	_check("too weak: the ultimatum can't go early, and says how strong you need to be", c9.check_send_early(me9, dogs).begins_with("You need"))

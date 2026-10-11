@@ -43,12 +43,15 @@ var bold_until: Dictionary = {}
 
 # A war goal one side is pressing on the other (doc 15, P2), or {} if none:
 # {"by", "goal" (see data/war_goals.json), "district" (id, or -1), "reason" ("" if none), "stage" ("justifying",
-# "ultimatum" or "war"), "ready_day" (justified on this day), "deadline" (the ultimatum's answer is due)}
+# "ultimatum" or "war"), "ready_day" (justified on this day), "started" (the day the target was told), "told_early" (the target
+# has been warned the ultimatum can now come at any time), "deadline" (the ultimatum's answer is due)}
 var claim: Dictionary = {}
 # War score from the claimant's side, before exhaustion is counted (see CityMap.war_score)
 var war_points: float = 0.0
 # Marriages between the two factions' families (doc 16, H3): [[a character id, b character id], ...]
 var marriages: Array = []
+# Asks made between the two (doc 18): "from_id|action_id" -> {"day", "until" (asking again is blocked until this day), "refusals"}
+var asks: Dictionary = {}
 
 func _init(p_a: String, p_b: String):
 	a = p_a
@@ -102,7 +105,7 @@ func to_dict() -> Dictionary:
 		"trade": trade, "pact": pact, "alliance": alliance, "overlord": overlord, "vassal_since_day": vassal_since_day, "treaty_until_day": treaty_until_day,
 		"baseline": baseline.duplicate(), "modifiers": modifiers.duplicate(true), "lapse_warned": lapse_warned,
 		"last_raid": last_raid.duplicate(), "last_demand": last_demand.duplicate(), "spare_until": spare_until.duplicate(), "bold_until": bold_until.duplicate(),
-		"claim": claim.duplicate(), "war_points": war_points, "marriages": marriages.duplicate(true),
+		"claim": claim.duplicate(), "war_points": war_points, "marriages": marriages.duplicate(true), "asks": asks.duplicate(true),
 	}
 
 static func from_dict(data: Dictionary) -> Relation:
@@ -126,6 +129,7 @@ static func from_dict(data: Dictionary) -> Relation:
 	r.claim = data["claim"]
 	r.war_points = data["war_points"]
 	r.marriages = data["marriages"]
+	r.asks = data["asks"]
 	for key in ["last_raid", "last_demand", "spare_until", "bold_until"]:
 		var saved: Dictionary = data[key]
 		for fid in saved:

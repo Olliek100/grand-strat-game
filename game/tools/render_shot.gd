@@ -104,6 +104,19 @@ func _setup(scenario: String):
 					city.factions[me].manpower = maxf(city.factions[me].manpower, 12.0)
 					_goto_venture.call_deferred(d, "raid")
 					break
+		"claim":
+			# A neighbour presses a claim on you: the marker under the top bar (doc 18)
+			for rel in city.relations.values():
+				if rel.involves(me):
+					rel.claim = {}
+			for fid in city.factions:
+				if fid != me and city.shares_border(fid, me) and not city.is_at_war(fid, me):
+					city.factions[fid].renown = 200.0
+					city.factions[fid].wealth = 500.0
+					if city.justify(fid, me, "claim") == "":
+						break
+			_close_window()
+			_refresh()
 		"paused":
 			# An alert pauses the game and says why beside the clock
 			paused = false

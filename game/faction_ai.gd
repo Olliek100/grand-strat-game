@@ -240,7 +240,7 @@ func stance_toward(city: CityMap, other_id: String) -> Array:
 		return ["ENEMY", "At war"]
 	var pressing = city.relation(faction_id, other_id)
 	if pressing.claim.get("by", "") == faction_id:
-		return ["PRESSING A CLAIM", "%s; %s" % [city.claim_text(pressing, other_id), "ultimatum in %d days" % (int(pressing.claim["ready_day"]) - city.day) if pressing.claim["stage"] == "justifying" else "awaiting an answer"]]
+		return ["PRESSING A CLAIM", "%s; %s" % [city.claim_text(pressing, other_id), "ultimatum in " + city.claim_clock(pressing) if pressing.claim["stage"] == "justifying" else "awaiting an answer"]]
 	var appeal = war_appeal(city, other_id)
 	if not appeal.is_empty():
 		return ["TARGET", appeal["reason"]]

@@ -10,7 +10,7 @@ signal first_contact(faction_id: String)
 # Big moments that deserve a pop-up: first contact, war on you, civil war, a leader's death
 signal major_event(title: String, text: String, faction_id: String)
 
-const SAVE_VERSION = 16
+const SAVE_VERSION = 17
 const SAVE_PATH = "user://savegame.sav"
 
 const DAYS_PER_MONTH = 30
@@ -41,8 +41,8 @@ var missions: Array[DiplomaticMission] = []
 var proposals: Array = []
 # Factions whose first demand for tribute has already been shown as a pop-up
 var demand_warned: Array = []
-# Sim harness only (not saved): counts what would stop the player's clock, see tools/balance_sim.gd
-var stop_sink = null
+# Sim harness only (not saved): counts stops, grievance and land changing hands, see tools/balance_sim.gd
+var sim_sink = null
 # is_raider() answers, kept for the current day (not saved)
 var raider_cache: Dictionary = {}
 var raider_cache_day: int = -1
@@ -450,8 +450,12 @@ func proposal_between(from_id: String, to_id: String) -> int:
 	return -1
 
 func _stop(category: String, cause: String):
-	if stop_sink != null:
-		stop_sink.note(category, cause)
+	if sim_sink != null:
+		sim_sink.note(category, cause)
+
+func _sim_grievance(d: District, source: String, amount: float):
+	if sim_sink != null and amount != 0.0:
+		sim_sink.grievance(d.id, source, amount)
 
 func add_proposal(action_id: String, from_id: String):
 	_stop("proposal", action_id)
@@ -488,10 +492,12 @@ func answer_proposal(index: int, accept: bool, expired: bool = false):
 		return
 	if accept and Diplomacy.check_action(self, p["action"], p["from"], player_id, true) == "":
 		Diplomacy.form_treaty(self, p["action"], p["from"], player_id)
+		Diplomacy.note_accepted(self, p["action"], p["from"], player_id)
 	elif GameData.diplomacy_action(p["action"])["kind"] == "demand":
 		Diplomacy._demand_refused(self, p["from"], player_id)
 	else:
 		change_opinion(p["from"], player_id, -5.0, "declined")
+		Diplomacy.note_refusal(self, p["action"], p["from"], player_id)
 		var what = "went unanswered and lapsed" if expired else "was turned down"
 		event.emit("The %s's proposal %s." % [faction_name(p["from"]), what], "info")
 
@@ -717,7 +723,7 @@ func justify(faction_id: String, target_id: String, goal_id: String, district: D
 		event.emit("The %s broke %s with the %s to press a claim. Everyone will remember it for years." % [
 			faction_name(faction_id), oath.replace("your", "their"), faction_name(target_id)], "alert" if player_id in [faction_id, target_id] else "info")
 	r.claim = {"by": faction_id, "goal": goal_id, "district": d.id if d else -1, "reason": reason, "stage": "justifying",
-		"ready_day": day + days, "deadline": 0}
+		"ready_day": day + days, "started": day, "told_early": false, "deadline": 0}
 	r.war_points = 0.0
 	# The target resents it; onlookers think less of a faction that presses claims, more so without cause
 	change_opinion(target_id, faction_id, GameData.rule("claim_target_opinion"), "claimed_us")
@@ -726,8 +732,8 @@ func justify(faction_id: String, target_id: String, goal_id: String, district: D
 			change_opinion(other, faction_id, GameData.rule("claim_onlooker_opinion" if reason != "" else "claim_unjust_opinion"), "warmonger")
 	var what = claim_text(r, player_id)
 	if target_id == player_id:
-		event.emit("The %s are justifying a claim on you: %s%s. Their ultimatum comes in %d days." % [faction_name(faction_id), what,
-			(" (because %s)" % reason) if reason != "" else " (with no cause: everyone thinks less of them)", days], "alert")
+		event.emit("The %s are justifying a claim on you: %s%s. Their ultimatum comes in %d to %d days: no sooner than the notice, and sooner than the latest only if their side grows strong enough. See the claim marker under the top bar." % [faction_name(faction_id), what,
+			(" (because %s)" % reason) if reason != "" else " (with no cause: everyone thinks less of them)", mini(int(GameData.rule("min_claim_notice_days")), days), days], "alert")
 	elif faction_id == player_id:
 		event.emit("You're justifying a claim on the %s: %s. Your ultimatum goes out in %d days%s." % [faction_name(target_id), what, days,
 			"" if reason != "" else " (no cause: half as long again, full price, and everyone thinks less of you)"], "info")
@@ -797,12 +803,40 @@ func claim_strength_ratio(r: Relation) -> float:
 	var by: String = r.claim["by"]
 	return side_strength(by, r.other(by)) / maxf(1.0, side_strength(r.other(by), by))
 
+# "90 to 180 days" or "180 days": when the ultimatum can come, for every place that says so
+func claim_clock(r: Relation) -> String:
+	var latest = int(r.claim["ready_day"]) - day
+	return "%d days" % latest if claim_notice_left(r) >= latest else "%d to %d days" % [claim_notice_left(r), latest]
+
+# Days of the minimum notice still to run before an early ultimatum may go out (0 once served)
+func claim_notice_left(r: Relation) -> int:
+	return maxi(0, int(r.claim.get("started", r.claim.get("ready_day", 0))) + int(GameData.rule("min_claim_notice_days")) - day)
+
+# What a claim on `viewer_id` means right now, in words: the earliest and latest ultimatum, what could bring it sooner, who backs it
+func claim_notice_text(r: Relation, viewer_id: String) -> String:
+	var by: String = r.claim["by"]
+	var latest = int(r.claim["ready_day"]) - day
+	var text = "The %s are justifying a claim: %s." % [faction_name(by), claim_text(r, viewer_id)]
+	var left = claim_notice_left(r)
+	if left >= latest:
+		text += "\nTheir ultimatum comes in %d days." % latest
+	else:
+		var need: float = GameData.war_goal(r.claim["goal"])["accept_need"]
+		var ratio = claim_strength_ratio(r)
+		text += "\nTheir ultimatum comes between %d and %d days from now. It can come early only when their side (with backers and friends) is %.1fx yours or more: it is %.1fx now." % [left, latest, need, ratio]
+	var backers = claim_backers(by, r.other(by)).map(func(fid): return faction_name(fid))
+	text += "\nBackers: %s." % (", ".join(backers) if not backers.is_empty() else "none")
+	return text
+
 # "" if the claimant can send its ultimatum before the claim is fully justified: only when its side is strong
 # enough that the target would likely give in (the strength the goal needs)
 func check_send_early(faction_id: String, other_id: String) -> String:
 	var r = relation(faction_id, other_id)
 	if r.claim.get("by", "") != faction_id or r.claim["stage"] != "justifying":
 		return "You have no claim being justified against them"
+	var notice_left = claim_notice_left(r)
+	if notice_left > 0:
+		return "The notice runs %d more days (%d days must pass before an early ultimatum)" % [notice_left, GameData.rule("min_claim_notice_days")]
 	var need: float = GameData.war_goal(r.claim["goal"])["accept_need"]
 	var ratio = claim_strength_ratio(r)
 	if ratio < need:
@@ -1008,6 +1042,9 @@ func _update_claims():
 			"justifying":
 				if day >= int(r.claim["ready_day"]):
 					_send_ultimatum(r)
+				elif r.other(by) == player_id and not r.claim.get("told_early", false) and check_send_early(by, player_id) == "":
+					r.claim["told_early"] = true
+					event.emit("The %s's side now outweighs yours: their ultimatum can come any day. Pay it off, back up your side, or make your own deals in Diplomacy (F4)." % faction_name(by), "alert")
 			"ultimatum":
 				# The player's answer is a proposal; one left too long is a refusal
 				if day >= int(r.claim["deadline"]) and not proposals.any(func(p): return p["action"] == "ultimatum" and p["from"] == by):
@@ -1073,6 +1110,7 @@ func _simulate_relations():
 		var owner = d.owner_id()
 		if owner != "" and at_war_with_anyone(owner):
 			d.grievance = minf(100.0, d.grievance + 0.05)
+			_sim_grievance(d, "war_daily", 0.05)
 
 # Removes a faction from the game. With into_id, it merges: its land, crew and stores pass to that faction.
 # `keep`: people already moved into the absorbing faction who stay whatever its captain limit (a house taken in)
@@ -1678,7 +1716,9 @@ func _resolve(v: ActiveVenture):
 			effects = effects.map(func(e): return _scaled_loss(e, severity))
 	# What the district was worth before the raid wrecked any of it
 	var worth = raid_worth(d)
+	var grievance_before = d.grievance
 	var result = VentureSystem.apply_effects(effects, f, v.target_id, d, self, v.crew, outcome["quality"])
+	_sim_grievance(d, "venture:" + v.venture_id, d.grievance - grievance_before)
 	if odds_note != "":
 		result["notes"].push_front(odds_note)
 	# How cleanly a success went scales what it brought home
@@ -3051,6 +3091,8 @@ func _announce_ownership_change(d: District, owner_before: String, actor_id: Str
 	var owner_after = d.owner_id()
 	if owner_after == owner_before:
 		return
+	if sim_sink != null:
+		sim_sink.flip(d.id, owner_before, owner_after, actor_id)
 	# A house that held it has lost its land, and blames its faction (doc 16)
 	_house_lost_land(d)
 	if owner_before != "" and actor_id != "" and is_at_war(owner_before, actor_id):
@@ -3412,6 +3454,8 @@ func advance_day():
 	_update_loyalty()
 	_check_first_contacts()
 	_life_cycle()
+	if sim_sink != null:
+		sim_sink.day_end()
 
 func _simulate_district(d: District):
 	var owner = d.owner_id()
@@ -3423,12 +3467,16 @@ func _simulate_district(d: District):
 			claimants += 1
 
 	d.grievance -= 0.15
+	_sim_grievance(d, "daily_calming", -0.15)
 	if claimants >= 2:
 		d.grievance += 0.35
+		_sim_grievance(d, "rival_claimants", 0.35)
 	if owner_faction:
 		d.grievance += owner_faction.effect("owned_daily_grievance")
+		_sim_grievance(d, "faction_effects", owner_faction.effect("owned_daily_grievance"))
 	if active:
 		d.grievance += d.building_effect("grievance_daily")
+		_sim_grievance(d, "buildings", d.building_effect("grievance_daily"))
 	d.grievance = clampf(d.grievance, 0.0, 100.0)
 	# Land nobody holds keeps falling apart: its ruins creep back toward what the district naturally is
 	if owner_faction == null:
@@ -3486,6 +3534,8 @@ func _simulate_district(d: District):
 func _check_unrest(d: District, owner: String):
 	# Secured districts don't revolt
 	if owner != "" and d.grievance > 80.0 and d.share(owner) < GameData.rule("secure_threshold") and rng.randf() < 0.04:
+		if sim_sink != null:
+			sim_sink.revolt(d.id)
 		d.add_influence(owner, -30.0)
 		d.grievance = 45.0
 		d.population *= 0.85
@@ -4470,6 +4520,7 @@ func take_reform(faction_id: String, gov_id: String) -> String:
 	for d in districts:
 		if d.owner_id() == faction_id:
 			d.grievance = clampf(d.grievance + REFORM_GRIEVANCE, 0.0, 100.0)
+			_sim_grievance(d, "reform", REFORM_GRIEVANCE)
 	for c in stance["against"]:
 		c.change_loyalty(-10.0, "reform_opposed")
 	for c in stance["for"]:
