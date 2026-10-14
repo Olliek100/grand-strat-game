@@ -111,3 +111,23 @@ Read from CK3 (character interactions, AI defines), HOI4 (defines) and a skim of
 Not read in depth: HOI4's diplomatic AI scripts beyond the defines, and CK2's coalition interaction (only its defines).
 
 **What it suggests for us (to design, not built):** drop pre-war backing in favour of calls to arms inside a war from standing alliances; give every ask a per-pair cooldown and a remembered refusal; give each possible backer stakes and hard blocks (border, family, existing friendship, nothing to gain); cap and cost pile-ons (cost per concurrent war or claim, stop calling when strong enough); keep the claimant's timer binding and visible.
+
+## War score, occupation and the cost of holding land (2026-10-11, for doc 20)
+
+Read from CK3 (casus belli types, defines, AI defines), HOI4 (defines, resistance and compliance files), and a skim of CK2 (casus belli types, defines). Patterns only; nothing copied. Prompted by the owner's playtest: districts change hands at once, white peace keeps what you took, the "enforce" lever is invisible, and the map is full by month 18.
+
+**1. Occupation and ownership are different things (CK3, HOI4).** A fight occupies territory; who *owns* it changes only when the war ends in a peace deal. Occupation is what earns war score.
+
+**2. War score has three sources (CK3).** *Occupation* (the share of the enemy's land you hold, times a scale, with a bonus for their capital); *battles* (won fights, capped per side); and a *ticking* score that grows each day, immediately for the attacker and only after a delay for the defender, so a war can't drag on for ever. Each war goal sets how large each source can be.
+
+**3. A goal needs a percentage of the score (CK3).** Pressing a claim to full victory needs the attacker's score at a set fraction of the maximum (80% for a plain claim), not just any lead. Below it, the attacker can still end the war by white peace or take a lesser deal.
+
+**4. Peace is a table of demands bought with score (CK3, HOI4).** Victory, white peace and defeat are the three endings. In HOI4's peace conference each demand has a cost in peace score and the winner spends what it has earned; costs rise for taking things you have no claim on and fall when the target is a state you hold a claim on.
+
+**5. White peace is the status quo (CK3).** No title changes; occupiers go home. A truce follows. The AI's willingness to accept it falls as it gains, and rises as it nears defeat: it has "close to victory" and "desperate" thresholds in score.
+
+**6. Newly taken land is unruly for a while (CK3, HOI4).** CK3: when a county changes hands by conquest its *control* drops by most of its value, then climbs back; income and levies scale with control (none at zero). HOI4: a captured state starts with low *compliance* and some *resistance*; resistance rises with unhappiness and falls with compliance, with a claim on the state, at peace, and with garrisons; compliance climbs over time in tiers, and each tier unlocks more of the state's yield and lowers the garrison it needs.
+
+**7. Growth is bounded by cost (CK2, CK3, HOI4).** CK2's *infamy* is added by each war (each casus belli carries its own multiplier, and "no cause" costs the most), makes others hostile, and above a threshold lets neighbours form a *coalition* against you; a conquest also brings a *truce* of years before the same two can fight again. CK3 caps how many holdings a ruler can hold directly (the domain limit, raised by skill and buildings) and adds tyranny for abuses. HOI4's non-core states are less productive and more restive.
+
+**What it suggests for us:** occupation as its own state on a district; war score from occupation, battles and a ticking clock; a peace table where score buys demands; a real white peace; conquest and settling both start with low control and ramp up; infamy (our "notoriety") per goal, with a truce of years; a cap on how much you can hold well.

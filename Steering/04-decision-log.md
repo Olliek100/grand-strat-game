@@ -2,6 +2,11 @@
 
 Decisions that still stand: each with what was rejected and why. New entries go at the top. Check this before relitigating a settled question. Per-build detail (numbers, tuning, simulation results) is in /CHANGELOG.md.
 
+**2026-10-14 (death risk, owner's decision)**
+
+- **Death follows age; ventures carry the rest.** A leader is no likelier to die of illness than anyone else. A failed venture can kill whoever led it, by how dangerous it is and how long the odds were, so a leader who leads an assault at poor odds takes that risk. Rejected: a flat extra risk for leaders (21% a year at 24: nothing the player could do about it).
+- **Consequence to watch:** successions and civil wars become rare in a short game (see the changelog). If the collapse arc needs them back, the lever is something that earns its risk (a hard office, an illness state with choices), not a flat leader death rate.
+
 **2026-10-10 (peace offers, and how /sim is read)**
 
 - **A standing peace offer is kept until the war ends; neither side can replace it.** Rejected: letting the latest offer win (two willing AIs overwrote each other for ever, so AI wars never ended by peace and the player was re-alerted daily).
