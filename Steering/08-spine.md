@@ -98,7 +98,7 @@ Rivals start the same way (same rules, pillar 3), so the city begins mostly empt
 | Government and succession | How strain is handled; what breaks at a death | **Built (v1.40):** Gang, Warlord, Autocracy, Politburo, Merchant Oligarchy, Democracy, each with its own succession and way of breaking; reforms with council approval |
 | Collapse and civil war | The pay-off of strain | **Built:** a failed succession splits the faction and starts a war. Civil wars 0-1 per game in the latest simulations |
 | Map art | Makes the loop visible: ruins, salvage, growth, strain | 2.5D procedural drawing (v1.23). The agreed 3D map (option B) not started |
-| Speed | Under 30 ms a simulated day (40 at speed 5) | **Over budget:** 74-83 ms a day in October 2026, on v1.41 and after alike; cause not yet found |
+| Speed | Under 30 ms a simulated day (40 at speed 5) | **Over budget:** about 50 ms a day in the profile on the 117-district map after the 2026-10-14 speed work (80-140 with the sim's own counters). The AI's venture search is 54% of a day and district simulation 24% |
 
 ## Build order (replaces the steps in doc 07)
 
@@ -113,6 +113,14 @@ Rivals start the same way (same rules, pillar 3), so the city begins mostly empt
 | **S4b. Fixes from play** (v1.39, v1.40; docs 10, 11, 13) | Raiders you can answer (cooldowns, tribute, Threaten); odds that explain themselves; standing tasks for routine work at home | Raids can be answered; "why 59%?" has an answer on screen |
 | **C1. Characters first, slice 1** (v1.41; doc 14) | Choice events (12) and births for every married couple; district payoffs alongside | "Something about my people happened that I had to decide" |
 | **C2. Education** (v1.42; doc 14) | Upbringing at 6 (changeable once a year), School, childhood events, traits settling at 16, Of the People and Born to Rule | "My heir turned out the way they did because of what I chose" |
+| **P1. Strength over dice** (v1.42; doc 15) | Force-based odds for raids and assaults; Disasters scaled to the gap | Built |
+| **P2. War goals and ultimatums** (v1.42; doc 15) | Claim, Subjugate, Vassalize; justify, ultimatum, war only on refusal; the AI plays the same steps | Built. Superseded in part by doc 20: wars are now fought over occupation and settled at a peace table |
+| **H1-H3. Houses and marriage** (v1.42; doc 16) | Matches within the faction, houses with land, loyalty and revolt, marriage between factions | Built |
+| **D1. Diplomacy restraints, build 1** (2026-10-11; doc 18) | A cooldown on every ask per pair and action (AI full length, player 35%), refusals remembered, a 90-day notice before an early ultimatum, a claim clock that reads as a range | Built. Pile-ons did not fall: build 2 (stake-based backing) is the fix |
+| **D2. The war goal window** (2026-10-11; doc 19) | A free assessment screen before committing to a goal: balance in five steps, one objective list, outcomes, requirements, the trend once under way, back down | Built |
+| **W1. War as negotiation** (2026-10-11; doc 20) | An assault occupies and the district pays nobody; war score from occupation, fights and a clock; a peace table; a status-quo white peace; a ten-year truce after a deal; backing off costs renown | Built. Wars mostly end in white peace after about 170 days |
+| **Death risk** (2026-10-14; doc 14) | Risk follows age; a failed venture can kill its leader, by danger and odds | Built. Successions fell from about 10 to about 3 a game and civil wars nearly vanish |
+| **W2-W3. The cost of growth and a bigger map** (2026-10-14; doc 20) | 117 districts and 12 factions; land settles in over months; infamy; reach; Settle slower | Built. **Pacing target not met:** the map still fills by year 3 |
 | **S5. Blood** | Bloodlines and marriage between factions, which create pacts, claims and heirs. *Doc 14 splits this: marriage within the faction first (its slice 4), then between factions* | Marriage is worth considering as an alternative to war |
 | **S6. Wider pressure** | Aggression memory and coalitions; the off-map crisis director (vertical slice) | Runaway conquest provokes a readable response |
 | Later | Tech tree; regional map | After the playbox gate |
@@ -183,6 +191,9 @@ This keeps doc 14's family at the centre, keeps the original strain-and-collapse
 | **P3. Council work** (doc 17, not written) | Routine work at home is assigned by the player in the Council screen and then runs passively for months, cheaply (far less than its one-off cost), with no per-run rolls; councillors' skills grow with time on the job | The player assigns a handful of jobs a game year instead of launching runs; the loop never breaks because a passive job eats more than it brings; a long-serving Quartermaster visibly out-produces a new one |
 | **C3-C4. Houses and marriage** ([doc 16](16-houses-and-marriage.md); H1-H3 built in v1.42) | Marriage within the faction, then between factions (the old S5); **vassal houses** inside a faction (from Vassalize, doc 15): each holds its old districts, has loyalty that can turn into revolt, marries into your family and into other factions' houses, and may answer (or decline) a call to arms for a reward; gatherings | The gangs of the opening have become houses: a run has at least one house that matters by year 10, and a disloyal house can be seen coming before it revolts |
 | **S6. Wider pressure** | Aggression memory and coalitions (they hang naturally off P2's war goals), the crisis director | Runaway conquest provokes a readable response |
+
+### Status, 2026-10-14
+Built: P1, P2, H1-H3, doc 18 build 1, the war goal window, W1, the death-risk change, W2 and W3 (see the build order above and the changelog). **Still to build:** P3 (council work; doc 17 not written), S6 (coalitions; infamy is its first half), doc 18 build 2 (stake-based volunteering and backing, allies deciding on a call, pay-off and marriage outs), a defender's victory at the peace table, an illness state with choices and a healer or clinic, a stronger early brake on expansion (the pacing target), and the speed goal.
 
 ### Needs a decision-log entry before building
 1. The new one-sentence spine.
