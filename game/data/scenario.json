@@ -77,6 +77,18 @@
 			"near": "guild", "blurb": "A preacher's armed flock. They take tithes, by force if need be.",
 			"manpower": 9, "supplies": 15, "materials": 8, "arms": 8, "wealth": 10,
 			"traits": {"Militaristic": 35}
+		},
+		{
+			"id": "gasworks_union", "name": "Gasworks Union", "color": "#c46f9a", "minor": true,
+			"near": "commune", "blurb": "Workers who kept the gasworks running, and now run the streets around it.",
+			"manpower": 8, "supplies": 18, "materials": 14, "arms": 4, "wealth": 12,
+			"traits": {"Socialist": 30}
+		},
+		{
+			"id": "northgate_watch", "name": "Northgate Watch", "color": "#5f9a7a", "minor": true,
+			"near": "guild", "blurb": "Former council wardens who still patrol their streets, for a fee.",
+			"manpower": 9, "supplies": 14, "materials": 8, "arms": 6, "wealth": 14,
+			"traits": {"Militaristic": 30}
 		}
 	]
 }

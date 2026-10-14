@@ -435,6 +435,7 @@ func _init():
 	var all_stops: Array = []
 	var war_totals = {"started": 0, "ended": 0, "days": 0, "ongoing": 0, "peace": 0}
 	var ties = {"trade": 0, "pact": 0, "alliance": 0}
+	var growth = {"infamy_sum": 0.0, "infamy_max": 0.0, "factions": 0, "over_reach": 0, "unsettled": 0, "districts": 0}
 	print("SEED %d (game r uses %d + r)" % [seed_base, seed_base])
 	var summary = {"broke_days": 0, "starve_days": 0, "civil_wars": 0, "largest": 0, "first_expand": []}
 	for run in runs:
@@ -490,6 +491,15 @@ func _init():
 					row.append("%s d%d f%d m%d w%d mp%d" % [fid, city.districts_held(fid), f.supplies, f.materials, f.wealth, f.manpower])
 				print("run %d year %d unclaimed %d | %s" % [run, (i + 1) / 360, city.districts.filter(func(d): return d.owner_id() == "").size(), "  ".join(row)])
 		counts["marriages"] = couples.size()
+		for fid in city.factions:
+			growth["factions"] += 1
+			growth["infamy_sum"] += city.factions[fid].infamy
+			growth["infamy_max"] = maxf(growth["infamy_max"], city.factions[fid].infamy)
+			growth["over_reach"] += 1 if city.districts_held(fid) > city.reach(fid) else 0
+		for d in city.districts:
+			if d.owner_id() != "":
+				growth["districts"] += 1
+				growth["unsettled"] += 1 if d.absorb < 0.9 else 0
 		for r in city.relations.values():
 			ties["trade"] += 1 if r.trade else 0
 			ties["pact"] += 1 if r.pact else 0
@@ -509,6 +519,7 @@ func _init():
 		summary["civil_wars"] += counts.get("civil_wars", 0)
 		summary["largest"] = maxi(summary["largest"], largest)
 		summary["first_expand"].append_array(first_expand.values())
+	print("GROWTH at the end of a game: infamy avg %.1f, worst %.0f | %.1f factions over their reach | %d%% of held land still settling in" % [growth["infamy_sum"] / maxi(growth["factions"], 1), growth["infamy_max"], float(growth["over_reach"]) / runs, roundi(100.0 * growth["unsettled"] / maxi(growth["districts"], 1))])
 	print("TIES standing at the end of a game: trade %.1f, pacts %.1f, alliances %.1f" % [float(ties["trade"]) / runs, float(ties["pact"]) / runs, float(ties["alliance"]) / runs])
 	print("WARS started %d, ended %d (by peace %d), still on at the end %d, average length of the ended %.0f days" % [
 		war_totals["started"], war_totals["ended"], war_totals["peace"], war_totals["ongoing"], float(war_totals["days"]) / maxi(war_totals["ended"], 1)])

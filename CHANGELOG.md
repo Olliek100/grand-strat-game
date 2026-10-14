@@ -2,6 +2,19 @@
 
 What each build changed, its tuning numbers and simulation results, newest first. Design decisions that still stand are in Steering/04-decision-log.md. From v1.38 on, each build is a git tag.
 
+**2026-10-14 (W2 and W3 of doc 20: the cost of growth, and a bigger map)**
+
+Saves from before this build won't load (save version 20).
+- **A bigger map:** 117 districts (was 61; the city's area is about twice as large, same size of district), 8 boroughs, 5 bridges, and 12 factions (two new minor factions: Gasworks Union, Northgate Watch). The map generator takes `MAP_SCALE`; the name pools are longer.
+- **Land takes time to settle** (W2): a district just conquered, settled or flipped starts at 15% settled and yields only a share of its worth (25% at the start, rising to full), over about 8 months; a garrison among the people speeds it, anger slows it, and it is restless meanwhile (grievance up while unsettled). Taking a district from someone adds 15 grievance. The district panel shows "settling N%".
+- **Infamy** (W2): taking land at the peace table (8 for a claim, 15 subjugate, 25 vassalize; half again with no cause, half again against a faction that liked you; 4 for each extra district), a successful raid (1), and breaking a treaty to press a claim (10) earn it; it fades slowly (0.04 a day). Each month everyone's opinion of a notorious faction falls (infamy x 0.1, kept as a fading "notorious" memory); treaty asks to or from them are harder; **above 70 nobody will sign** trade, pacts, alliances, matches or backing with them. A top-bar chip shows it.
+- **Reach** (W2): how many districts a council can administer well: 5, plus one for each seated councillor, plus half the best Stewardship. Each district past it adds 0.1 grievance a day to every district (capped at 0.6). The Land chip shows "held/reach".
+- **Settle is slower:** 18 days (was 10) and 14 materials plus 8 food (was 12 and 5).
+- **Speed work** (needed because the bigger map doubled the cost of a day): the AI weighs only ventures that can apply to a district's owner and reach, works out its food balance only when it moves, hoists its best captain; opinion baselines are refreshed every 6 days (saved, so a reload plays out the same). A day costs about 50 ms in the profile (70 before the work, about the same as the old map); in the full sim with its counters 80-140 ms. **Still over the 30 ms goal**: AI venture search is 54% and district simulation 24%.
+- **Test fixed:** "the plan aims to outnumber them 2 to 1" never put the two at war, so it passed only when the target's garrison was small.
+- **Measured (30 games of 4 years, seeds 100-500, then an 8-year run):** the map still fills by year 3: unclaimed districts 60 at the end of year 1, 10 at year 2, 2 at year 3 (before the retune 56, 8, 1). At 8 years 5 stay unclaimed. **The pacing target is not met.** More survive: factions left 9-11 in most games (7 before), but one game still produced an 84-district faction. Civil wars 0.04 a game, successions 3.7, wars 5.1, raids 56 (39 on the old map), stops 48 a game year (34). Infamy stays small (average 0.4-2, worst 59); 2.8-3.7 factions end over their reach. Broke days 1243 and starving 1435 per 30 games.
+- **Not yet:** a stronger early brake (the first year claims about 57 of 117 districts), the speed goal, a defender's victory.
+
 **2026-10-14 (death risk follows age; ventures carry the rest)**
 
 - **Everyone's baseline follows age.** The flat 2% a month (21% a year) for leaders is gone: a leader dies of illness or age at the same rate as any adult (about 2.4% a year, rising after 50). The character window's "chance of dying this year" shows it.

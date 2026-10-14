@@ -27,6 +27,8 @@ var house_id: int = -1
 # A faction at war with the owner holds it (doc 20): it pays nobody, the garrison is the occupier's crew
 var occupier: String = ""
 var occupied_day: int = 0
+# How settled the people are under their owner, 0 to 1: land just taken or settled yields little and is restless (doc 20)
+var absorb: float = 1.0
 
 # Map shape
 var polygon: PackedVector2Array
@@ -114,7 +116,7 @@ func to_dict() -> Dictionary:
 	return {
 		"influence": influence.duplicate(), "population": population, "grievance": grievance,
 		"ruin_level": ruin_level, "development": development, "unrest_warned": unrest_warned,
-		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard, "raid_safe_until": raid_safe_until, "restored_by": restored_by, "garrison": garrison, "house_id": house_id, "occupier": occupier, "occupied_day": occupied_day,
+		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard, "raid_safe_until": raid_safe_until, "restored_by": restored_by, "garrison": garrison, "house_id": house_id, "occupier": occupier, "occupied_day": occupied_day, "absorb": absorb,
 	}
 
 func load_dict(data: Dictionary):
@@ -133,3 +135,4 @@ func load_dict(data: Dictionary):
 	house_id = int(data["house_id"])
 	occupier = data["occupier"]
 	occupied_day = int(data["occupied_day"])
+	absorb = float(data["absorb"])

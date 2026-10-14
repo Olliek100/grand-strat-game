@@ -10,7 +10,7 @@ signal first_contact(faction_id: String)
 # Big moments that deserve a pop-up: first contact, war on you, civil war, a leader's death
 signal major_event(title: String, text: String, faction_id: String)
 
-const SAVE_VERSION = 18
+const SAVE_VERSION = 20
 const SAVE_PATH = "user://savegame.sav"
 
 const DAYS_PER_MONTH = 30
@@ -257,7 +257,12 @@ func yield_multiplier(district: District) -> float:
 		return 0.0
 	if district.occupier != "":
 		return 0.0
-	return GameData.rule("status_yield").get(district.get_control_status(), 0.0)
+	return GameData.rule("status_yield").get(district.get_control_status(), 0.0) * absorb_factor(district)
+
+# Land just taken or settled yields a fraction of its worth until its people settle (doc 20)
+func absorb_factor(district: District) -> float:
+	var least: float = GameData.rule("absorb_min_yield")
+	return least + (1.0 - least) * district.absorb
 
 func has_venture_at(faction_id: String, district: District) -> bool:
 	for v in ventures:
@@ -639,6 +644,53 @@ func offer_peace(faction_id: String, target_id: String):
 	if target_id == player_id:
 		event.emit("The %s offer peace. Accept it in Diplomacy (F4), or fight on." % faction_name(faction_id), "alert")
 
+# --- The cost of growth (doc 20, W2): reach and infamy -------------------------------------------
+
+# Districts held per faction and each faction's reach, worked out once a day (not saved)
+var held_cache: Dictionary = {}
+var reach_cache: Dictionary = {}
+
+# How many districts a faction can hold comfortably: what its council can administer. Past it, every district grumbles
+func reach(faction_id: String) -> float:
+	var seated = 0
+	var best_steward = 0
+	for c in characters_of(faction_id):
+		if c.post != "":
+			seated += 1
+			best_steward = maxi(best_steward, int(c.skills["stewardship"]))
+	return GameData.rule("reach_base") + seated * GameData.rule("reach_per_councillor") + best_steward * GameData.rule("reach_per_stewardship")
+
+func _reach_today(faction_id: String) -> float:
+	if not reach_cache.has(faction_id):
+		reach_cache[faction_id] = reach(faction_id)
+	return reach_cache[faction_id]
+
+func add_infamy(faction_id: String, amount: float):
+	if factions.has(faction_id) and amount > 0.0:
+		factions[faction_id].infamy = minf(200.0, factions[faction_id].infamy + amount)
+
+# Everyone thinks a little less of a notorious faction each month, more the worse it is
+func _infamy_opinions():
+	for f in factions.values():
+		if f.infamy < 5.0:
+			continue
+		for other in factions:
+			if other != f.id:
+				change_opinion(other, f.id, -f.infamy * GameData.rule("infamy_opinion_factor"), "notorious")
+
+# What winning a war goal earns in infamy: the goal's weight, more with no cause, more against a faction that liked you
+func _war_infamy(r: Relation):
+	var by: String = r.claim["by"]
+	var amount: float = GameData.rule("infamy_goal")[r.claim["goal"]]
+	if r.claim.get("reason", "") == "":
+		amount *= GameData.rule("infamy_no_cause_mult")
+	if r.claim.get("friendly", false):
+		amount *= GameData.rule("infamy_friendly_mult")
+	add_infamy(by, amount)
+
+func venture_id_is_raid(v: ActiveVenture) -> bool:
+	return v.venture_id == "raid"
+
 # --- Occupation (doc 20) ------------------------------------------------------------------------
 # An assault takes a district's keeping, not its ownership: ownership changes only at the peace table.
 # An occupied district pays nobody, its buildings stand idle, nothing can be launched there, and the
@@ -790,11 +842,13 @@ func justify(faction_id: String, target_id: String, goal_id: String, district: D
 		for other in factions:
 			if other != faction_id:
 				change_opinion(other, faction_id, GameData.rule("claim_oathbreaker_opinion"), "oathbreaker")
+		add_infamy(faction_id, GameData.rule("infamy_oath"))
 		event.emit("The %s broke %s with the %s to press a claim. Everyone will remember it for years." % [
 			faction_name(faction_id), oath.replace("your", "their"), faction_name(target_id)], "alert" if player_id in [faction_id, target_id] else "info")
 	r.claim = {"by": faction_id, "goal": goal_id, "district": d.id if d else -1, "reason": reason, "stage": "justifying",
 		"ready_day": day + days, "started": day, "told_early": false, "deadline": 0}
 	r.claim["start_ratio"] = claim_strength_ratio(r)
+	r.claim["friendly"] = opinion_of(target_id, faction_id) >= 20.0
 	r.claim["start_their_strength"] = faction_strength(target_id)
 	r.claim["step"] = strength_step(1.0 / maxf(0.01, r.claim["start_ratio"]))
 	r.war_points = 0.0
@@ -1215,6 +1269,7 @@ func enforce_claim(faction_id: String, other_id: String, picks: Array = []) -> S
 	for demand in chosen:
 		if demand["kind"] == "district":
 			_transfer_district(districts[int(demand["id"].substr(2))], by)
+			add_infamy(by, GameData.rule("infamy_extra_district"))
 		elif demand["kind"] == "tribute":
 			var wealth = minf(float(GameData.rule("peace_tribute_wealth")), factions[other_id].wealth)
 			factions[other_id].wealth -= wealth
@@ -1291,6 +1346,7 @@ func _end_claim_war(r: Relation, claimant_won: bool):
 func _apply_war_goal(r: Relation):
 	var by: String = r.claim["by"]
 	var against = r.other(by)
+	_war_infamy(r)
 	match r.claim["goal"]:
 		"claim":
 			var d: District = districts[int(r.claim["district"])]
@@ -1369,6 +1425,8 @@ func feed_trait_by_name(f: Faction, trait_name: String, amount: float):
 	if f.traits.add_faction_trait_value(trait_name, amount) == 1:
 		_announce_trait(f, trait_name)
 
+const BASELINE_REFRESH_DAYS = 6
+
 func _simulate_relations():
 	var daily_exhaustion: float = GameData.rule("war_daily_exhaustion")
 	var drift: float = GameData.rule("opinion_daily_drift")
@@ -1376,8 +1434,10 @@ func _simulate_relations():
 		for fid in [r.a, r.b]:
 			# The baseline follows changes in who they are and what binds them gradually;
 			# memories fade at their own pace
-			var target = Diplomacy.baseline_value(Diplomacy.opinion_baseline(self, fid, r.other(fid)))
-			r.baseline[fid] = move_toward(r.baseline[fid], target, drift)
+			# (the target is worked out every few days, staggered by pair: it changes slowly, and it was most of the relations' cost)
+			if not r.baseline_target.has(fid) or (day + r.a.hash()) % BASELINE_REFRESH_DAYS == 0:
+				r.baseline_target[fid] = Diplomacy.baseline_value(Diplomacy.opinion_baseline(self, fid, r.other(fid)))
+			r.baseline[fid] = move_toward(r.baseline[fid], r.baseline_target[fid], drift)
 			var memories: Array = r.modifiers[fid]
 			for m in memories.duplicate():
 				m["value"] = move_toward(m["value"], 0.0, GameData.opinion_modifier(m["id"])["decay"])
@@ -2070,6 +2130,8 @@ func _resolve(v: ActiveVenture):
 				if v.target_id == player_id and sooner > 0:
 					event.emit("The %s raided you: your claim on them is justified %d days sooner (ultimatum in %d days)." % [
 						f.display_name, sooner, int(raided.claim["ready_day"]) - day], "good")
+		if success and venture_id_is_raid(v):
+			add_infamy(f.id, GameData.rule("infamy_raid"))
 		if not success and defenders_at(v.target_id, d) >= 2:
 			result["notes"].append("the %s lick their wounds" % f.display_name)
 		result["notes"].append("no raids on %s for %d days" % [d.district_name, d.raid_safe_until - day])
@@ -3422,6 +3484,10 @@ func _announce_ownership_change(d: District, owner_before: String, actor_id: Str
 		return
 	if sim_sink != null:
 		sim_sink.flip(d.id, owner_before, owner_after, actor_id)
+	if owner_after != "":
+		d.absorb = GameData.rule("absorb_start")
+		if owner_before != "":
+			d.grievance = minf(100.0, d.grievance + GameData.rule("conquest_grievance"))
 	# A house that held it has lost its land, and blames its faction (doc 16)
 	_house_lost_land(d)
 	if owner_before != "" and actor_id != "" and is_at_war(owner_before, actor_id):
@@ -3737,6 +3803,15 @@ func advance_day():
 	day += 1
 	for f in factions.values():
 		f.effect_cache.clear()
+		f.infamy = maxf(0.0, f.infamy - GameData.rule("infamy_decay_daily"))
+	held_cache.clear()
+	reach_cache.clear()
+	for d in districts:
+		var holder = d.owner_id()
+		if holder != "":
+			held_cache[holder] = held_cache.get(holder, 0) + 1
+	if day % 30 == 5:
+		_infamy_opinions()
 	for d in districts:
 		_simulate_district(d)
 	_simulate_relations()
@@ -3797,6 +3872,19 @@ func _simulate_district(d: District):
 	if d.occupier != "":
 		d.grievance += GameData.rule("occupied_grievance_daily")
 		_sim_grievance(d, "occupation", GameData.rule("occupied_grievance_daily"))
+	if d.occupier == "" and owner != "":
+		if d.absorb < 1.0:
+			# People settle faster with a garrison among them, and slower while they are angry
+			var guard = 0.5 + 0.5 * clampf(d.garrison / maxf(garrison_ceiling(d), 1.0), 0.0, 1.0)
+			d.absorb = minf(1.0, d.absorb + guard * (0.5 if d.grievance > 50.0 else 1.0) / GameData.rule("absorb_days"))
+			var restless = GameData.rule("absorb_grievance_daily") * (1.0 - d.absorb)
+			d.grievance += restless
+			_sim_grievance(d, "unsettled", restless)
+		var over = held_cache.get(owner, 0) - _reach_today(owner)
+		if over > 0:
+			var stretched = minf(GameData.rule("reach_grievance_cap"), over * GameData.rule("reach_grievance_daily"))
+			d.grievance += stretched
+			_sim_grievance(d, "overstretched", stretched)
 	if claimants >= 2:
 		d.grievance += 0.35
 		_sim_grievance(d, "rival_claimants", 0.35)

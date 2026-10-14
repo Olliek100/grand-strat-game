@@ -50,6 +50,8 @@ var claim: Dictionary = {}
 var war_points: float = 0.0
 # Marriages between the two factions' families (doc 16, H3): [[a character id, b character id], ...]
 var marriages: Array = []
+# Where each side's opinion baseline is heading, refreshed every few days (saved, so a reloaded game plays out the same)
+var baseline_target: Dictionary = {}
 # Asks made between the two (doc 18): "from_id|action_id" -> {"day", "until" (asking again is blocked until this day), "refusals"}
 var asks: Dictionary = {}
 
@@ -105,7 +107,7 @@ func to_dict() -> Dictionary:
 		"trade": trade, "pact": pact, "alliance": alliance, "overlord": overlord, "vassal_since_day": vassal_since_day, "treaty_until_day": treaty_until_day,
 		"baseline": baseline.duplicate(), "modifiers": modifiers.duplicate(true), "lapse_warned": lapse_warned,
 		"last_raid": last_raid.duplicate(), "last_demand": last_demand.duplicate(), "spare_until": spare_until.duplicate(), "bold_until": bold_until.duplicate(),
-		"claim": claim.duplicate(), "war_points": war_points, "marriages": marriages.duplicate(true), "asks": asks.duplicate(true),
+		"claim": claim.duplicate(), "war_points": war_points, "marriages": marriages.duplicate(true), "asks": asks.duplicate(true), "baseline_target": baseline_target.duplicate(),
 	}
 
 static func from_dict(data: Dictionary) -> Relation:
@@ -130,6 +132,7 @@ static func from_dict(data: Dictionary) -> Relation:
 	r.war_points = data["war_points"]
 	r.marriages = data["marriages"]
 	r.asks = data["asks"]
+	r.baseline_target = data["baseline_target"]
 	for key in ["last_raid", "last_demand", "spare_until", "bold_until"]:
 		var saved: Dictionary = data[key]
 		for fid in saved:

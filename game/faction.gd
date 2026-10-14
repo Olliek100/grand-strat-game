@@ -33,6 +33,8 @@ var scouted: Dictionary = {}
 # helps treaties get accepted. Reputation is every point ever earned and never goes down: it carries
 # renown's lasting effects (crew and captain limits, recruits, the heir's claim, respect).
 var renown: float = 0.0
+# Notoriety: what conquest, raiding and broken word have earned, fading slowly (doc 20); others think less of it
+var infamy: float = 0.0
 var reputation: float = 0.0
 var deeds_done: Array = []
 # National Ambitions (data/national_ambitions.json): the one being pursued and days left, those completed
@@ -176,7 +178,7 @@ func pay(costs: Dictionary):
 func to_dict() -> Dictionary:
 	return {
 		"id": id, "name": display_name, "color": color.to_html(false), "player": is_player,
-		"manpower": manpower, "supplies": supplies, "materials": materials, "arms": arms, "wealth": wealth, "starving": starving, "broke": broke, "home_id": home_id, "renown": renown, "reputation": reputation, "deeds_done": deeds_done.duplicate(), "ambition": ambition, "ambition_days_left": ambition_days_left, "ambitions_done": ambitions_done.duplicate(), "ambitions_closed": ambitions_closed.duplicate(), "government": government, "reform_locked_until": reform_locked_until, "caretaker_until": caretaker_until, "last_succession_day": last_succession_day, "timed_effects": timed_effects.duplicate(true), "next_event_day": next_event_day, "event_last": event_last.duplicate(), "stats": stats.duplicate(), "scouted": scouted.duplicate(), "disrepair": disrepair, "minor": minor, "blurb": blurb, "designated_heir": designated_heir, "lean": lean.duplicate(), "bought": bought.duplicate(),
+		"manpower": manpower, "supplies": supplies, "materials": materials, "arms": arms, "wealth": wealth, "starving": starving, "broke": broke, "home_id": home_id, "renown": renown, "infamy": infamy, "reputation": reputation, "deeds_done": deeds_done.duplicate(), "ambition": ambition, "ambition_days_left": ambition_days_left, "ambitions_done": ambitions_done.duplicate(), "ambitions_closed": ambitions_closed.duplicate(), "government": government, "reform_locked_until": reform_locked_until, "caretaker_until": caretaker_until, "last_succession_day": last_succession_day, "timed_effects": timed_effects.duplicate(true), "next_event_day": next_event_day, "event_last": event_last.duplicate(), "stats": stats.duplicate(), "scouted": scouted.duplicate(), "disrepair": disrepair, "minor": minor, "blurb": blurb, "designated_heir": designated_heir, "lean": lean.duplicate(), "bought": bought.duplicate(),
 		"traits": traits.to_dict(), "ai": ai.to_dict() if ai else {},
 	}
 
@@ -191,6 +193,7 @@ static func from_dict(data: Dictionary) -> Faction:
 	f.broke = data["broke"]
 	f.home_id = int(data["home_id"])
 	f.renown = data["renown"]
+	f.infamy = float(data["infamy"])
 	f.reputation = data["reputation"]
 	f.deeds_done = data["deeds_done"]
 	f.ambition = data["ambition"]

@@ -70,3 +70,6 @@ Each is a build you can play before the next.
 
 ## Built: W1 (2026-10-11)
 Occupation, war score, the peace table, a status-quo white peace, the cost and truce for backing off, and the ten-year truce are built as described (see the changelog). Not yet built: a defender's victory demands, parts B and C (W2, W3). Measured side effect: factions go hungrier and poorer at war, since occupied districts pay nobody; not retuned.
+
+## Built: W2 and W3 (2026-10-14)
+The map is 117 districts with 12 factions; settling-in, infamy and reach are built as above (see the changelog). **The pacing target is not met**: the map still fills by year 3. The first year claims about 57 of 117 districts whatever the Settle cost, so the next lever is the early game itself (what limits each faction's first dozen districts), or a bigger map. The speed goal (30 ms a day) is also unmet.

@@ -239,6 +239,9 @@ static func check_action(city: CityMap, action_id: String, from_id: String, to_i
 			return "%s them lately%s: again in %d days" % [who, " and were turned down" + ((" %d times" % refusals) if refusals > 1 else "") if refusals > 0 else "", wait]
 	if def["kind"] != "gift" and r.at_war:
 		return "You're at war (make peace first)"
+	var notorious: float = city.factions[from_id].infamy
+	if not for_resolution and action_id in ["trade", "pact", "alliance", "match", "backing"] and notorious >= GameData.rule("infamy_block"):
+		return "Nobody will sign with a faction this notorious: infamy %d (the limit is %d). It fades slowly, or lives it down" % [notorious, GameData.rule("infamy_block")]
 	# A tributary's dealings abroad are its suzerain's: it may only trade
 	if action_id != "trade" and city.overlord_of(from_id) != "" and city.overlord_of(from_id) != to_id:
 		return "Tributaries make no diplomacy but trade (they answer to the %s)" % city.faction_name(city.overlord_of(from_id))
@@ -336,6 +339,8 @@ static func acceptance(city: CityMap, action_id: String, from_id: String, to_id:
 	var factors = []
 	var opinion = city.opinion_of(to_id, from_id)
 	factors.append(["Their opinion of you (%+d)" % opinion, clampf(1.0 + opinion / 100.0, 0.1, 2.0)])
+	if from.infamy > 5.0:
+		factors.append(["Their view of your infamy (%d)" % from.infamy, clampf(1.0 - from.infamy / 150.0, 0.3, 1.0)])
 	var reputation = from.effect("diplomacy_mult")
 	if reputation != 1.0:
 		factors.append(["Your Diplomatic reputation", reputation])

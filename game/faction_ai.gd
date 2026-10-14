@@ -26,8 +26,6 @@ func _init(p_faction_id: String):
 	faction_id = p_faction_id
 
 func think(city: CityMap):
-	var econ = city.daily_economy(faction_id)["supplies"]
-	food_net = econ["income"] - econ["upkeep"]
 	_think_war(city)
 	_think_diplomacy(city)
 	if city.day % 30 == 7:
@@ -37,6 +35,9 @@ func think(city: CityMap):
 	if days_until_next_move > 0:
 		return
 	days_until_next_move = city.rng.randi_range(3, 7)
+	# The food balance is only needed to choose a move, so it is worked out only when one is due
+	var econ = city.daily_economy(faction_id)["supplies"]
+	food_net = econ["income"] - econ["upkeep"]
 	_think_buy(city)
 	# One move at a time, from one list: building at home competes with ventures abroad for the same
 	# turn and the same stocks, so a faction that builds up grows outward more slowly (and the other way round)
@@ -59,11 +60,20 @@ func think(city: CityMap):
 	var best_venture = ""
 	var best_district: District = null
 	var council_free = not city.available_leaders(faction_id).filter(func(c): return c.post != "").is_empty()
+	# The best war captain is the same for every fight weighed this turn: found once, when first needed
+	var captain_found = false
+	var captain: Character = null
 	for d in city.districts:
 		# One operation per district at a time, rather than piling on
 		if city.has_venture_at(faction_id, d):
 			continue
+		# Only scouting and trade reach beyond your own land and its frontier, and most ventures can't apply to a district of the
+		# wrong owner (the conditions check_launch applies first), so those pairs are not weighed at all
+		var reach = city.can_reach(faction_id, d)
+		var holder = d.owner_id()
 		for venture_id in GameData.ventures():
+			if not _could_apply(GameData.venture(venture_id)["target"], reach, holder, d):
+				continue
 			# Routine work on its own land is a councillor's standing task, by the same rules as the player's
 			if city.is_task(faction_id, venture_id, d):
 				if not council_free or city.task_at(faction_id, venture_id, d) or city.task_done_reason(faction_id, venture_id, d) != "":
@@ -76,7 +86,9 @@ func think(city: CityMap):
 			var odds = 0.0
 			# A fight is judged at the crew it would really send, and not picked while outnumbered
 			if GameData.venture(venture_id).has("force") and target_id != "":
-				var captain = city.best_leader(faction_id, "command")
+				if not captain_found:
+					captain = city.best_leader(faction_id, "command")
+					captain_found = true
 				var chances = VentureSystem.compute_odds(venture_id, me, d, city, target_id, captain, city.recommended_plan(faction_id, venture_id, d, captain)["crew"])
 				if chances["force"]["ratio"] < 1.0:
 					continue
@@ -298,6 +310,27 @@ func _think_diplomacy(city: CityMap):
 				best_target = other_id
 	if best_action != "":
 		Diplomacy.start_action(city, best_action, faction_id, best_target)
+
+# A cheap necessary condition for a venture to apply to a district, so most pairs are never weighed (mirrors check_launch)
+func _could_apply(target: String, reach: bool, holder: String, d: District) -> bool:
+	if target == "scout":
+		return holder == ""
+	if target == "market":
+		return holder != "" and holder != faction_id
+	if not reach:
+		return false
+	match target:
+		"own":
+			return holder == faction_id
+		"unclaimed_border":
+			return holder == ""
+		"scavenge":
+			return holder == "" or holder == faction_id
+		"enemy_border", "raider_border":
+			return holder != "" and holder != faction_id
+		"war_border":
+			return (holder != "" and holder != faction_id) or d.occupier != ""
+	return true
 
 # How much the faction wants this diplomatic outcome with `other_id`, before acceptance odds
 func _diplomacy_value(action_id: String, other_id: String, me: Faction, city: CityMap) -> float:

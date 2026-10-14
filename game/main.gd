@@ -367,7 +367,7 @@ func _build_top_bar():
 	faction_label.add_theme_font_size_override("font_size", 14)
 	row.add_child(faction_label)
 	# Resources: short on the bar, the full breakdown on hover
-	for key in ["manpower", "supplies", "materials", "arms", "wealth", "renown", "districts"]:
+	for key in ["manpower", "supplies", "materials", "arms", "wealth", "renown", "infamy", "districts"]:
 		var chip = Button.new()
 		chip.flat = true
 		chip.focus_mode = Control.FOCUS_NONE
@@ -1124,8 +1124,13 @@ func _refresh_top_bar():
 	_chip("wealth", "Wealth %d %s" % [p.wealth, _signed(wealth_day)], wealth_day, _resource_tooltip("wealth", "Wealth", e, wealth_day))
 	_chip("renown", "Renown %d" % p.renown, 0.0, "Renown: %d to spend on National Ambitions (F5). Earned by deeds and triumphs. Unspent, it helps your proposals get accepted.\n\nReputation: %d, everything you've ever earned (it never goes down). It raises your manpower and captain limits, draws better recruits, strengthens your heir's claim and earns respect.%s" % [
 		p.renown, p.reputation, ("\n\nPursuing %s: %d days left." % [GameData.national_ambition(p.ambition)["label"], p.ambition_days_left]) if p.ambition != "" else "\n\nNo ambition under way."])
-	_chip("districts", "Land %d" % city.districts_held(p.id), 0.0, "Districts held: %d\nThe first %d cost no administration; after that the cost climbs faster than your territory (now %.2f wealth a day)." % [
-		city.districts_held(p.id), GameData.rule("admin_free_districts"), city.admin_upkeep(p.id)])
+	var held = city.districts_held(p.id)
+	var reach = city.reach(p.id)
+	_chip("districts", "Land %d/%d" % [held, roundi(reach)], 0.0 if held <= reach else -1.0, "Districts held: %d, of the %d your council can administer well (your reach: %d to begin with, one more for each seated councillor, and more for the best Stewardship).%s\nThe first %d cost no administration; after that the cost climbs faster than your territory (now %.2f wealth a day)." % [
+		held, roundi(reach), GameData.rule("reach_base"), (" You are over it: every district grumbles a little more each day." if held > reach else ""),
+		GameData.rule("admin_free_districts"), city.admin_upkeep(p.id)])
+	resource_chips["infamy"].visible = p.infamy >= 1.0
+	_chip("infamy", "Infamy %d" % p.infamy, -1.0 if p.infamy >= GameData.rule("infamy_block") else 0.0, "Infamy: what taking land, raiding and breaking your word have earned you. It fades slowly. Others think less of you each month (now %+d opinion a month), treaties are harder to get (nobody signs above %d), and neighbours are likelier to turn on you." % [-p.infamy * GameData.rule("infamy_opinion_factor"), GameData.rule("infamy_block")])
 
 func _chip(key: String, text: String, change: float, tooltip: String):
 	var chip: Button = resource_chips[key]
@@ -3725,8 +3730,11 @@ func _refresh_district_info():
 		if d.share(fid) >= 1.0:
 			shares.append("  %s %d" % ["You" if fid == p.id else city.faction_name(fid), d.share(fid)])
 	var share_text = ("\nInfluence here:\n" + "\n".join(shares)) if shares.size() > 0 else ""
+	if d.absorb < 0.99 and owner != "" and d.occupier == "":
+		share_text += "
+Settling in: %d%%. Land just taken or settled yields only part of its worth until its people settle (a garrison among them, and calm, speed it up); it is restless meanwhile." % (d.absorb * 100)
 	if mine:
-		_stat("control", true, "Control %d/%d" % [d.share(p.id), secure], ("Your hold on %s. Claimed at %d, Secured at %d (%.1fx income and manpower, harder to attack, can't revolt).\nRaise it with Safeguard the Shelter (most), Secure Food and Gather Weapons; a calm district drifts up to %d on its own.%s") % [
+		_stat("control", true, "Control %d/%d%s" % [d.share(p.id), secure, (" · settling %d%%" % (d.absorb * 100)) if d.absorb < 0.99 else ""], ("Your hold on %s. Claimed at %d, Secured at %d (%.1fx income and manpower, harder to attack, can't revolt).\nRaise it with Safeguard the Shelter (most), Secure Food and Gather Weapons; a calm district drifts up to %d on its own.%s") % [
 			d.district_name, claim, secure, GameData.rule("status_yield")["secured"], GameData.rule("control_consolidation_cap"), share_text],
 			Color(0.55, 0.85, 0.55) if d.share(p.id) >= secure else Color(0.95, 0.75, 0.4))
 	elif owner != "":

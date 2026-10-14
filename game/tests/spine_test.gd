@@ -17,6 +17,7 @@ func _init():
 	_test_war_goal_window()
 	_test_occupation_and_peace()
 	_test_death_risk()
+	_test_cost_of_growth()
 	_test_treaties()
 	_test_memories_and_deeds()
 	_test_leaders_and_tiers()
@@ -427,6 +428,90 @@ func _test_occupation_and_peace():
 	var loaded = CityMap.load_game(path)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	_check("occupation survives a save", loaded != null and loaded.districts[d4.id].occupier == me4 and loaded.districts[d4.id].garrison == 3.0)
+
+# The cost of growth (doc 20, W2): land takes time to settle, notoriety, and reach
+func _test_cost_of_growth():
+	var c = _new_city()
+	var me = c.player_id
+	var home: District = c.districts[c.factions[me].home_id]
+	_check("your starting land is fully settled", home.absorb == 1.0)
+	var full = c.yield_multiplier(home)
+	home.absorb = GameData.rule("absorb_start")
+	var fresh = c.yield_multiplier(home)
+	_check("land just taken yields only part of its worth", fresh < full * 0.5 and fresh > 0.0, "%.2f of %.2f" % [fresh, full])
+	var before = home.absorb
+	for i in 30:
+		c._simulate_district(home)
+	_check("it settles in with time", home.absorb > before)
+	var slow = home.absorb - before
+	home.absorb = before
+	home.garrison = c.garrison_ceiling(home)
+	for i in 30:
+		c._simulate_district(home)
+	_check("a garrison among the people settles them faster", home.absorb - before >= slow)
+	# Taking a district from someone: unsettled and angry
+	var foe = "guild"
+	_border_with(c, me, foe)
+	var d: District = c.claim_candidates(me, foe)[0]
+	d.grievance = 10.0
+	c._transfer_district(d, me)
+	_check("a conquered district starts unsettled", d.absorb == GameData.rule("absorb_start"), str(d.absorb))
+	_check("and angry", d.grievance >= 10.0 + GameData.rule("conquest_grievance") - 0.01, str(d.grievance))
+	# Infamy
+	var f: Faction = c.factions[me]
+	f.infamy = 0.0
+	c.add_infamy(me, 12.0)
+	_check("infamy builds", f.infamy == 12.0)
+	f.infamy = 30.0
+	c.advance_day()
+	_check("it fades slowly", f.infamy < 30.0 and f.infamy > 29.0)
+	f.infamy = 50.0
+	c.day = 5 + 30 * 3
+	var opinion_before = c.opinion_of("rival", me)
+	c._infamy_opinions()
+	_check("others think less of the notorious", c.opinion_of("rival", me) < opinion_before)
+	f.wealth = 500.0
+	f.infamy = GameData.rule("infamy_block") + 1.0
+	_check("nobody signs with a faction past the limit, and it says why", Diplomacy.check_action(c, "trade", me, "rival").contains("notorious"), Diplomacy.check_action(c, "trade", me, "rival"))
+	f.infamy = 0.0
+	var plain = Diplomacy.acceptance(c, "trade", me, "rival")["chance"]
+	f.infamy = 60.0
+	_check("below the limit it is only harder", Diplomacy.acceptance(c, "trade", me, "rival")["chance"] < plain)
+	f.infamy = 0.0
+	# A war goal won earns infamy: more with no cause, more against a friend
+	var c2 = _new_city()
+	var me2 = c2.player_id
+	_border_with(c2, me2, foe)
+	var r2 = c2.relation(me2, foe)
+	r2.claim = {"by": me2, "goal": "claim", "district": c2.claim_candidates(me2, foe)[0].id, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0, "started": c2.day, "friendly": false}
+	c2._war_infamy(r2)
+	var plain_gain = c2.factions[me2].infamy
+	c2.factions[me2].infamy = 0.0
+	r2.claim["reason"] = "they raided you"
+	c2._war_infamy(r2)
+	var cause_gain = c2.factions[me2].infamy
+	c2.factions[me2].infamy = 0.0
+	r2.claim["friendly"] = true
+	c2._war_infamy(r2)
+	_check("winning a goal earns infamy, less with cause, more against a friend", plain_gain > cause_gain and c2.factions[me2].infamy > cause_gain, "%.1f %.1f %.1f" % [plain_gain, cause_gain, c2.factions[me2].infamy])
+	# Reach
+	var reach = c.reach(me)
+	_check("reach is what a council can administer", reach >= GameData.rule("reach_base"))
+	c.held_cache = {me: int(reach) + 5}
+	c.reach_cache = {}
+	var g = home.grievance
+	home.absorb = 1.0
+	home.garrison = 0.0
+	c._simulate_district(home)
+	_check("past your reach, the realm grumbles", home.grievance > g - 0.15 + 0.05, "%.2f -> %.2f" % [g, home.grievance])
+	# Saving keeps all of it
+	var path = "user://growth_test.sav"
+	home.absorb = 0.4
+	f.infamy = 33.0
+	c.save_game(path)
+	var loaded = CityMap.load_game(path)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_check("a saved game keeps settling and infamy", loaded != null and is_equal_approx(loaded.districts[home.id].absorb, 0.4) and is_equal_approx(loaded.factions[me].infamy, 33.0))
 
 # Death risk (doc 14): age alone decides the baseline; a failed venture can kill its leader, by danger and by how long the odds were
 func _test_death_risk():
@@ -1652,6 +1737,8 @@ func _test_force():
 	_check("twice their force: about 85%+ and no disaster", two_to_one["odds"] >= 0.8 and two_to_one["tiers"]["disaster"] == 0.0, "%.2f at crew %d" % [two_to_one["odds"], crew])
 	_check("an assault can take as much crew as you have idle", c.crew_max(me, "assault") == 80 and c.crew_max(me, "raid") == int(GameData.venture("raid")["crew_range"][1]))
 	# The planner sizes a fight to outnumber them 2 to 1
+	# (a fight is only planned when you are at war with them)
+	c.start_war(me, "rust_dogs")
 	var plan = c.recommended_plan(me, "assault", their_home, null)
 	_check("the plan aims to outnumber them 2 to 1", plan["crew"] >= crew - 1, "%d (needed %d)" % [plan["crew"], crew])
 	# Garrisons: knocked down, then rebuilt from the district's people before they join your manpower

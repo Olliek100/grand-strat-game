@@ -4,8 +4,10 @@ class_name MapGenerator
 # the river and its bridges, and the main roads. Run tools/generate_map.gd to regenerate it.
 # The game only reads the JSON, so the layout can also be edited by hand.
 
-const SIZE = Vector2(2000, 1300)
-const CITY_RADIUS = Vector2(840, 520)
+# The city's area is about twice what it was (doc 20, W3): the same size of district, twice as many of them
+const MAP_SCALE = 1.4
+const SIZE = Vector2(2000, 1300) * MAP_SCALE
+const CITY_RADIUS = Vector2(840, 520) * MAP_SCALE
 # Districts are closer together downtown and further apart towards the edge
 const MIN_SPACING = 118.0
 const VERTEX_MERGE = 1.0
@@ -13,19 +15,19 @@ const BOROUGH_COUNT = 8
 
 const NAMES = {
 	"downtown": ["Central Hub", "Cathedral Quarter", "Market Square", "Civic Centre", "The Exchange", "Old Town",
-		"Clock Tower", "Guildhall", "Arcade Row", "Tower Blocks", "Bank Street"],
+		"Clock Tower", "Guildhall", "Arcade Row", "Tower Blocks", "Bank Street", "Merchants' Row", "Assembly Rooms", "Royal Exchange", "Cloth Hall", "Lamp Street", "Town Hall Square"],
 	"residential": ["Terrace Row", "Church Lane", "Council Estate", "Canal Quarter", "Hospital Hill", "University Row",
 		"Brewery Lane", "Chapel Street", "Mill Street", "Station Road", "Albion Heights", "Grove Street", "Kingsway",
-		"Orchard Rise", "Cemetery Road", "Tannery Row", "Viaduct", "Victoria Estate"],
+		"Orchard Rise", "Cemetery Road", "Tannery Row", "Viaduct", "Victoria Estate", "Almshouse Row", "Willow Court", "Priory Lane", "Cobbler's Yard", "Harcourt Gardens", "St Anne's Terrace", "Pump Lane", "Bakers' Row", "Linden Close", "Quaker Street", "Damson Walk"],
 	"industrial": ["Gasworks", "Rail Yards", "Power Station", "Printworks", "Scrapyard", "Steelworks", "Foundry Lane",
-		"Water Works", "Bus Depot", "Brickfields", "Chemical Works", "Freight Yard"],
+		"Water Works", "Bus Depot", "Brickfields", "Chemical Works", "Freight Yard", "Tin Mill", "Gas Holder Yard", "Glassworks", "Textile Mill", "Loading Bay", "Smelter Row", "Cable Works"],
 	"docks": ["South Docks", "Ferry Landing", "Harbour", "Wharfside", "Riverside", "Boatyard", "Lock Gates",
-		"Warehouse Row", "Quayside", "Coal Wharf"],
-	"park": ["Allotments", "Memorial Park", "Botanic Gardens", "The Common", "Cemetery", "Racecourse"],
+		"Warehouse Row", "Quayside", "Coal Wharf", "Timber Quay", "Customs House", "Fish Landing", "Barge Basin", "Cargo Steps"],
+	"park": ["Allotments", "Memorial Park", "Botanic Gardens", "The Common", "Cemetery", "Racecourse", "Bowling Green", "Rose Garden", "Heath", "Bandstand Green", "Playing Fields"],
 	"suburb": ["Garden Suburb", "Retail Park", "Stadium", "Outer Ring", "Airfield", "Golf Links", "Hillcrest",
-		"Meadowbank", "Highfield", "Ashgrove", "Elm Park", "Bramble Close"],
+		"Meadowbank", "Highfield", "Ashgrove", "Elm Park", "Bramble Close", "Rowan Avenue", "Sunnyside", "Heron Park", "Birch Estate", "Lakeside Drive", "Maple Close", "Fairview"],
 	"outskirts": ["Nomad Camp", "Deep Ruins", "Motorway Junction", "Landfill", "Barracks", "Quarry", "Burnt Farms",
-		"Pylon Fields", "Service Station", "Checkpoint", "Outer Settlement", "Agricultural Belt", "Sewage Works"],
+		"Pylon Fields", "Service Station", "Checkpoint", "Outer Settlement", "Agricultural Belt", "Sewage Works", "Wasteland Edge", "Pallet Yard", "Roadside Camp", "Fuel Depot", "Bypass", "Gravel Pits", "Overgrown Estate"],
 }
 
 # Boroughs are named by where they sit in the city, echoing the factions' home turf
