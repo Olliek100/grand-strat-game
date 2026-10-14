@@ -10,7 +10,7 @@ signal first_contact(faction_id: String)
 # Big moments that deserve a pop-up: first contact, war on you, civil war, a leader's death
 signal major_event(title: String, text: String, faction_id: String)
 
-const SAVE_VERSION = 17
+const SAVE_VERSION = 18
 const SAVE_PATH = "user://savegame.sav"
 
 const DAYS_PER_MONTH = 30
@@ -210,9 +210,15 @@ func _claim_home(faction_id: String, near: Vector2):
 func faction_name(faction_id: String) -> String:
 	return factions[faction_id].display_name if factions.has(faction_id) else "nobody"
 
+# Land a faction holds: its own, unless an enemy occupies it, or an enemy'"'"'s that it occupies (an army advances from what it has taken)
+func holds(faction_id: String, district: District) -> bool:
+	if district.occupier != "":
+		return district.occupier == faction_id
+	return district.owner_id() == faction_id
+
 func borders_territory(faction_id: String, district: District) -> bool:
 	for n_id in district.neighbor_ids:
-		if districts[n_id].owner_id() == faction_id:
+		if holds(faction_id, districts[n_id]):
 			return true
 	return false
 
@@ -248,6 +254,8 @@ func can_scout_from(faction_id: String, district: District) -> bool:
 # Income/recruit multiplier the owner gets from a district (0 if unowned)
 func yield_multiplier(district: District) -> float:
 	if district.owner_id() == "":
+		return 0.0
+	if district.occupier != "":
 		return 0.0
 	return GameData.rule("status_yield").get(district.get_control_status(), 0.0)
 
@@ -606,7 +614,13 @@ func make_peace(faction_id: String, target_id: String) -> String:
 	war_cache.clear()
 	r.peace_offered_by = ""
 	# A white peace: any war goal lapses
+	if not r.claim.is_empty():
+		_claim_backed_off(r.claim["by"], r.other(r.claim["by"]))
+	end_occupations_between(r.a, r.b)
+	if sim_sink != null:
+		sim_sink.war_end("white_peace", day - r.war_start_day)
 	r.claim = {}
+	r.war_points = 0.0
 	r.truce_until_day = day + truce_days
 	if r.involves(player_id):
 		event.emit("Peace with the %s. A truce holds for %d days; borders stay where they are." % [
@@ -624,6 +638,62 @@ func offer_peace(faction_id: String, target_id: String):
 	r.peace_offered_by = faction_id
 	if target_id == player_id:
 		event.emit("The %s offer peace. Accept it in Diplomacy (F4), or fight on." % faction_name(faction_id), "alert")
+
+# --- Occupation (doc 20) ------------------------------------------------------------------------
+# An assault takes a district's keeping, not its ownership: ownership changes only at the peace table.
+# An occupied district pays nobody, its buildings stand idle, nothing can be launched there, and the
+# crew who took it stay as its garrison (manpower tied up). Peace, or a successful assault by the owner, ends it.
+
+func occupy(d: District, by_id: String, crew: int):
+	var owner = d.owner_id()
+	d.occupier = by_id
+	d.occupied_day = day
+	d.garrison = float(crew)
+	if owner != "":
+		add_exhaustion(owner, by_id, GameData.rule("occupation_exhaustion"))
+	if sim_sink != null:
+		sim_sink.occupied(d.id, by_id)
+	if by_id == player_id:
+		event.emit("You occupy %s: it pays nobody until the war is settled. %d of your crew stay to hold it." % [d.district_name, crew], "good")
+	elif owner == player_id:
+		event.emit("The %s have occupied %s: it pays you nothing until you retake it or the war is settled." % [faction_name(by_id), d.district_name], "alert")
+	else:
+		event.emit("The %s have occupied %s, held by the %s." % [faction_name(by_id), d.district_name, faction_name(owner)], "info")
+
+# The occupation ends: the occupier's crew go home (unless they were beaten), the owner's garrison starts again from nothing
+func release_occupation(d: District, crew_home: bool):
+	if d.occupier == "":
+		return
+	if crew_home and factions.has(d.occupier):
+		factions[d.occupier].manpower += d.garrison
+	d.occupier = ""
+	d.garrison = 0.0
+
+# The owner drives the occupiers out: the crew who did it stay as the garrison
+func liberate(d: District, by_id: String, crew: int):
+	var occupier = d.occupier
+	release_occupation(d, false)
+	d.garrison = float(crew)
+	if sim_sink != null:
+		sim_sink.liberated(d.id, by_id)
+	if by_id == player_id:
+		event.emit("You have retaken %s from the %s." % [d.district_name, faction_name(occupier)], "good")
+	elif d.owner_id() == player_id or occupier == player_id:
+		event.emit("%s has been retaken by the %s." % [d.district_name, faction_name(by_id)], "alert" if occupier == player_id else "good")
+
+func occupied_by(by_id: String, of_id: String) -> Array:
+	return districts.filter(func(d): return d.occupier == by_id and d.owner_id() == of_id)
+
+func end_occupations_between(a_id: String, b_id: String):
+	for d in districts:
+		if d.occupier != "" and ((d.occupier == a_id and d.owner_id() == b_id) or (d.occupier == b_id and d.owner_id() == a_id)):
+			release_occupation(d, true)
+
+# Whoever stops being at war with the occupier, or stops owning, ends the occupation
+func _check_occupation(d: District):
+	var owner = d.owner_id()
+	if owner == "" or owner == d.occupier or not factions.has(d.occupier) or not is_at_war(owner, d.occupier):
+		release_occupation(d, true)
 
 # --- War goals and ultimatums (doc 15, P2) -------------------------------------------------
 # No war without a goal: the claimant justifies it over some days (the target is told at once), then sends an
@@ -724,6 +794,9 @@ func justify(faction_id: String, target_id: String, goal_id: String, district: D
 			faction_name(faction_id), oath.replace("your", "their"), faction_name(target_id)], "alert" if player_id in [faction_id, target_id] else "info")
 	r.claim = {"by": faction_id, "goal": goal_id, "district": d.id if d else -1, "reason": reason, "stage": "justifying",
 		"ready_day": day + days, "started": day, "told_early": false, "deadline": 0}
+	r.claim["start_ratio"] = claim_strength_ratio(r)
+	r.claim["start_their_strength"] = faction_strength(target_id)
+	r.claim["step"] = strength_step(1.0 / maxf(0.01, r.claim["start_ratio"]))
 	r.war_points = 0.0
 	# The target resents it; onlookers think less of a faction that presses claims, more so without cause
 	change_opinion(target_id, faction_id, GameData.rule("claim_target_opinion"), "claimed_us")
@@ -757,13 +830,39 @@ func claim_text(r: Relation, viewer_id: String = "") -> String:
 func claim_target(r: Relation) -> String:
 	return r.other(r.claim["by"])
 
-# War score from the claimant's side, -100 to 100: fights won and lost, land taken, and who's more worn down
+# War score from the claimant's side, -100 to 100 (doc 20): land occupied, fights won, the clock, and who's more worn down
 func war_score(r: Relation) -> float:
 	if r.claim.is_empty():
 		return 0.0
+	return war_score_parts(r)["total"]
+
+# The parts of the score, for the war window: occupation (the share of the other's districts you hold, with a bonus
+# for their home), battles (capped), a clock that favours the attacker at once and the defender after a delay, exhaustion
+func war_score_parts(r: Relation) -> Dictionary:
 	var by: String = r.claim["by"]
 	var against = r.other(by)
-	return clampf(r.war_points + (r.exhaustion[against] - r.exhaustion[by]) * GameData.rule("war_score_exhaustion"), -100.0, 100.0)
+	var days = day - r.war_start_day
+	var rate: float = GameData.rule("war_tick_daily")
+	var parts = {
+		"occupation_for": occupation_score(by, against),
+		"occupation_against": occupation_score(against, by),
+		"battles": clampf(r.war_points, -GameData.rule("war_battle_cap_defender"), GameData.rule("war_battle_cap_attacker")),
+		"clock_for": days * rate,
+		"clock_against": maxf(0.0, days - GameData.rule("war_tick_defender_delay")) * rate,
+		"exhaustion": (r.exhaustion[against] - r.exhaustion[by]) * GameData.rule("war_score_exhaustion")}
+	parts["total"] = clampf(parts["occupation_for"] - parts["occupation_against"] + parts["battles"] + parts["clock_for"] - parts["clock_against"] + parts["exhaustion"], -100.0, 100.0)
+	return parts
+
+# What holding the other's districts is worth: their share held, times the scale, plus a bonus for their home
+func occupation_score(holder_id: String, owner_id: String) -> float:
+	var owned = districts_held(owner_id)
+	if owned <= 0 or not factions.has(owner_id):
+		return 0.0
+	var score: float = GameData.rule("war_occupation_scale") * float(occupied_by(holder_id, owner_id).size()) / owned
+	var home: int = factions[owner_id].home_id
+	if home >= 0 and districts[home].occupier == holder_id and districts[home].owner_id() == owner_id:
+		score += GameData.rule("war_home_bonus")
+	return score
 
 # Chance an AI target gives in to an ultimatum: likelier the more the claimant outweighs it and its friends,
 # less likely the harsher the goal
@@ -806,7 +905,115 @@ func claim_strength_ratio(r: Relation) -> float:
 # "90 to 180 days" or "180 days": when the ultimatum can come, for every place that says so
 func claim_clock(r: Relation) -> String:
 	var latest = int(r.claim["ready_day"]) - day
-	return "%d days" % latest if claim_notice_left(r) >= latest else "%d to %d days" % [claim_notice_left(r), latest]
+	var left = claim_notice_left(r)
+	if left >= latest:
+		return "%d days" % latest
+	return "up to %d days" % latest if left <= 0 else "%d to %d days" % [left, latest]
+
+# --- What a war goal would mean, for the war goal window (doc 19) --------------------------------
+
+const STRENGTH_WORDS = ["much weaker than", "weaker than", "similar to", "stronger than", "much stronger than"]
+
+# Their side against yours in five steps (0 much weaker .. 4 much stronger); the ratio is theirs over yours
+func strength_step(their_over_your: float) -> int:
+	if their_over_your < 0.5:
+		return 0
+	if their_over_your < 0.8:
+		return 1
+	if their_over_your <= 1.25:
+		return 2
+	if their_over_your <= 2.0:
+		return 3
+	return 4
+
+# Their side over yours, counting each side's friends (and the backers of a claim already under way)
+func their_over_your(faction_id: String, target_id: String) -> float:
+	return side_strength(target_id, faction_id) / maxf(1.0, side_strength(faction_id, target_id))
+
+# The districts of `target_id` that border `faction_id`'s land: what "Acquire" can name
+func claim_candidates(faction_id: String, target_id: String) -> Array:
+	return districts.filter(func(d): return d.owner_id() == target_id and borders_territory(faction_id, d))
+
+# Who would be called into a war between the two if it began now: [the attacker's side, the defender's side]
+func war_sides(attacker_id: String, defender_id: String) -> Array:
+	var mine = []
+	var theirs = []
+	for fid in defenders_of(defender_id):
+		if _could_join(fid, attacker_id) and fid not in theirs:
+			theirs.append(fid)
+	for fid in vassals_of(attacker_id):
+		if _could_join(fid, defender_id) and fid not in mine:
+			mine.append(fid)
+	for fid in factions:
+		if fid != attacker_id and fid != defender_id and relation(attacker_id, fid).alliance and _could_join(fid, defender_id) and fid not in mine:
+			mine.append(fid)
+	for fid in claim_backers(attacker_id, defender_id):
+		if fid not in mine:
+			mine.append(fid)
+	return [mine, theirs]
+
+func _could_join(joiner_id: String, enemy_id: String) -> bool:
+	return joiner_id != enemy_id and not is_at_war(joiner_id, enemy_id) and not relation(joiner_id, enemy_id).protected()
+
+func cost_words(cost: Dictionary) -> String:
+	var parts = []
+	for resource_type in cost:
+		parts.append("%d %s" % [cost[resource_type], resource_type])
+	return ", ".join(parts) if not parts.is_empty() else "free"
+
+# What each ending of a war goal would mean, as lines of [tone, text] (tone "good", "bad" or "plain")
+func goal_outcomes(target_id: String, goal_id: String, d: District) -> Dictionary:
+	var goal = GameData.war_goal(goal_id)
+	var tname = faction_name(target_id)
+	var win = [["plain", "If they give in at the ultimatum there is no war. If they refuse, it is war until the score reaches %d." % goal["price"]]]
+	match goal_id:
+		"claim":
+			if d:
+				var spoils = (", with its %s" % ", ".join(d.building_labels())) if not d.buildings.is_empty() else ""
+				win.append(["good", "%s is yours: %d people%s. Its garrison is cleared." % [d.district_name, d.population, spoils]])
+		"subjugate":
+			win.append(["good", "The %s become your tributary: they keep their land and ruler and send you %d%% of their income in food, materials and wealth." % [tname, GameData.rule("tribute_rate") * 100]])
+			win.append(["plain", "They trade only and start no wars."])
+		"vassalize":
+			win.append(["good", "The %s are absorbed: their %d districts, people and stores become yours, and their ruling family becomes a house of yours." % [tname, districts_held(target_id)]])
+	var lose = [
+		["bad", "If your side is worn out first you pay reparations, up to %d wealth." % GameData.rule("war_defeat_wealth")],
+		["bad", "Everything you paid to press the claim is gone."],
+		["plain", "They keep what they hold. A truce of %d days follows." % GameData.rule("truce_days")]]
+	return {"win": win, "lose": lose}
+
+# The requirements for pressing a goal, as [state, text] (state "ok", "warn" or "no"): ticks and crosses for the window
+func justify_requirements(faction_id: String, target_id: String, goal_id: String, d: District) -> Array:
+	var list = []
+	var goal = GameData.war_goal(goal_id)
+	var borders = shares_border(faction_id, target_id)
+	list.append(["ok" if borders else "no", "You share a border with them" if borders else "You don't share a border with them yet"])
+	if goal["needs_district"]:
+		list.append(["ok" if d != null else "no", ("%s borders your land" % d.district_name) if d != null else "None of their districts borders yours"])
+	var cost = justify_cost(faction_id, target_id, goal_id)
+	var short = factions[faction_id].shortfall(cost)
+	list.append(["ok" if short == "" else "no", ("You can pay %s" % cost_words(cost)) if short == "" else short])
+	var reason = claim_reason(faction_id, target_id)
+	if reason != "":
+		list.append(["ok", "You have cause (%s): half price, and quicker" % reason])
+	else:
+		list.append(["warn", "No cause: half as long again, full price, and everyone thinks less of you"])
+	var oath = oath_broken(faction_id, target_id)
+	if oath != "":
+		list.append(["warn", "Breaks %s: every faction thinks much less of you for years" % oath])
+	var err = check_justify(faction_id, target_id, goal_id, d)
+	if err != "" and err != short and borders and not (goal["needs_district"] and d == null):
+		list.append(["no", err])
+	return list
+
+# Your own claim under way: when the balance turns against it, say so once, and again if it recovers and turns again
+func _watch_own_claim(r: Relation):
+	var by: String = r.claim["by"]
+	var step = strength_step(1.0 / maxf(0.01, claim_strength_ratio(r)))
+	if step > int(r.claim.get("step", step)):
+		event.emit("The balance has turned against your claim on the %s: their side is now %s yours. Open the claim to hold or back down." % [
+			faction_name(r.other(by)), STRENGTH_WORDS[step]], "alert")
+	r.claim["step"] = step
 
 # Days of the minimum notice still to run before an early ultimatum may go out (0 once served)
 func claim_notice_left(r: Relation) -> int:
@@ -823,7 +1030,10 @@ func claim_notice_text(r: Relation, viewer_id: String) -> String:
 	else:
 		var need: float = GameData.war_goal(r.claim["goal"])["accept_need"]
 		var ratio = claim_strength_ratio(r)
-		text += "\nTheir ultimatum comes between %d and %d days from now. It can come early only when their side (with backers and friends) is %.1fx yours or more: it is %.1fx now." % [left, latest, need, ratio]
+		if left <= 0:
+			text += "\nTheir ultimatum comes within %d days, and any day their side (with backers and friends) is %.1fx yours or more: it is %.1fx now." % [latest, need, ratio]
+		else:
+			text += "\nTheir ultimatum comes between %d and %d days from now. It can come early only when their side (with backers and friends) is %.1fx yours or more: it is %.1fx now." % [left, latest, need, ratio]
 	var backers = claim_backers(by, r.other(by)).map(func(fid): return faction_name(fid))
 	text += "\nBackers: %s." % (", ".join(backers) if not backers.is_empty() else "none")
 	return text
@@ -859,6 +1069,7 @@ func withdraw_claim(faction_id: String, other_id: String) -> String:
 		return "You have no claim to withdraw against them"
 	proposals = proposals.filter(func(p): return not (p["action"] == "ultimatum" and p["from"] == faction_id))
 	r.claim = {}
+	_claim_backed_off(faction_id, other_id)
 	event.emit("The %s withdrew their claim on the %s." % [faction_name(faction_id), faction_name(other_id)], "info")
 	return ""
 
@@ -914,6 +1125,7 @@ func answer_ultimatum(r: Relation, accept: bool):
 		event.emit(text, "good" if by == player_id else ("bad" if against == player_id else "info"))
 		_apply_war_goal(r)
 		r.claim = {}
+		r.truce_until_day = day + int(GameData.rule("truce_war_days"))
 		return
 	r.claim["stage"] = "war"
 	r.war_points = 0.0
@@ -935,16 +1147,108 @@ func check_enforce(faction_id: String, other_id: String) -> String:
 	var price: float = GameData.war_goal(r.claim["goal"])["price"]
 	if war_score(r) >= price:
 		return ""
-	if r.claim["goal"] == "vassalize" and factions.has(other_id) and districts[factions[other_id].home_id].owner_id() == faction_id:
+	if r.claim["goal"] == "vassalize" and factions.has(other_id) and districts[factions[other_id].home_id].occupier == faction_id:
 		return ""
 	return "War score %d of %d needed" % [war_score(r), price]
 
-func enforce_claim(faction_id: String, other_id: String) -> String:
+# --- The peace table (doc 20) -------------------------------------------------------------------
+# The claimant spends war score on demands: the war goal first, then other districts it occupies, then tribute.
+# No consent is needed once the score allows it. A white peace is the status quo and needs the other side to agree.
+
+func peace_district_cost(d: District) -> float:
+	return GameData.rule("peace_district_cost") + d.population * GameData.rule("peace_district_cost_per_people")
+
+# What the claimant could demand now: [{"id", "label", "cost", "kind" ("goal", "district" or "tribute")}]
+func peace_demands(faction_id: String, other_id: String) -> Array:
+	var r = relation(faction_id, other_id)
+	var list = []
+	if r.claim.get("stage", "") != "war" or r.claim["by"] != faction_id:
+		return list
+	var goal = GameData.war_goal(r.claim["goal"])
+	list.append({"id": "goal", "label": claim_text(r, faction_id), "cost": float(goal["price"]), "kind": "goal"})
+	# The faction absorbed whole has nothing left to take
+	if r.claim["goal"] == "vassalize":
+		return list
+	for d in occupied_by(faction_id, other_id):
+		if r.claim["goal"] == "claim" and d.id == int(r.claim["district"]):
+			continue
+		list.append({"id": "d:%d" % d.id, "label": "Take %s" % d.district_name, "cost": peace_district_cost(d), "kind": "district"})
+	var wealth = minf(float(GameData.rule("peace_tribute_wealth")), factions[other_id].wealth)
+	list.append({"id": "tribute", "label": "Tribute of %d wealth" % wealth, "cost": float(GameData.rule("peace_tribute_cost")), "kind": "tribute"})
+	return list
+
+# The demands an AI takes: the goal, then what the remaining score buys, cheapest first
+func auto_demands(faction_id: String, other_id: String) -> Array:
+	var r = relation(faction_id, other_id)
+	var demands = peace_demands(faction_id, other_id)
+	if demands.is_empty():
+		return []
+	var budget = war_score(r) - demands[0]["cost"]
+	var extras = demands.slice(1)
+	extras.sort_custom(func(a, b): return a["cost"] < b["cost"])
+	var picks = []
+	for e in extras:
+		if e["cost"] <= budget:
+			picks.append(e["id"])
+			budget -= e["cost"]
+	return picks
+
+# Take your terms: the goal and the demands picked, paid for in war score. Ends the war with a long truce
+func enforce_claim(faction_id: String, other_id: String, picks: Array = []) -> String:
 	var err = check_enforce(faction_id, other_id)
 	if err != "":
 		return err
-	_end_claim_war(relation(faction_id, other_id), true)
+	var r = relation(faction_id, other_id)
+	var demands = peace_demands(faction_id, other_id)
+	var budget = war_score(r) - demands[0]["cost"]
+	var chosen = []
+	for id in picks:
+		for demand in demands:
+			if demand["id"] == id and id != "goal":
+				chosen.append(demand)
+	var spend = 0.0
+	for demand in chosen:
+		spend += demand["cost"]
+	if spend > maxf(budget, 0.0):
+		return "Those demands cost %d war score; you have %d to spend after the goal" % [spend, maxf(budget, 0.0)]
+	var by = faction_id
+	for demand in chosen:
+		if demand["kind"] == "district":
+			_transfer_district(districts[int(demand["id"].substr(2))], by)
+		elif demand["kind"] == "tribute":
+			var wealth = minf(float(GameData.rule("peace_tribute_wealth")), factions[other_id].wealth)
+			factions[other_id].wealth -= wealth
+			factions[by].wealth += wealth
+	_end_claim_war(r, true)
 	return ""
+
+# A district changes hands at the peace table (the only place ownership changes in a war)
+func _transfer_district(d: District, to_id: String):
+	var owner_before = d.owner_id()
+	release_occupation(d, true)
+	var share = maxf(d.share(owner_before), 51.0)
+	d.influence.erase(owner_before)
+	d.add_influence(to_id, share)
+	d.garrison = 0.0
+	_announce_ownership_change(d, owner_before, to_id)
+
+# Pressing a claim and then backing off (withdrawing, or a white peace) costs the one who pressed it, and brings a truce
+func _claim_backed_off(by_id: String, against_id: String):
+	if not factions.has(by_id) or not factions.has(against_id):
+		return
+	var f: Faction = factions[by_id]
+	var lost = minf(f.renown, float(GameData.rule("claim_failed_renown")))
+	f.renown -= lost
+	change_opinion(against_id, by_id, -10.0, "backed_off")
+	for other in factions:
+		if other != by_id and other != against_id:
+			change_opinion(other, by_id, -3.0, "backed_off")
+	var r = relation(by_id, against_id)
+	r.truce_until_day = maxi(r.truce_until_day, day + int(GameData.rule("truce_days")))
+	if by_id == player_id:
+		event.emit("You backed off your claim on the %s: -%d renown, and a truce of %d days." % [faction_name(against_id), lost, GameData.rule("truce_days")], "bad")
+	elif against_id == player_id:
+		event.emit("The %s backed off their claim on you: a truce of %d days." % [faction_name(by_id), GameData.rule("truce_days")], "good")
 
 # The side a claim is pressed against gives in, in the middle of the war
 func concede_claim(faction_id: String, other_id: String) -> String:
@@ -971,12 +1275,17 @@ func _end_claim_war(r: Relation, claimant_won: bool):
 	if claimant_won:
 		factions[by].stats["wars_won"] += 1
 		_apply_war_goal(r)
+	var war_days = day - r.war_start_day
 	r.claim = {}
+	r.war_points = 0.0
+	end_occupations_between(r.a, r.b)
 	if r.at_war:
 		r.at_war = false
 		war_cache.clear()
 		r.peace_offered_by = ""
-		r.truce_until_day = day + int(GameData.rule("truce_days"))
+		r.truce_until_day = day + int(GameData.rule("truce_war_days"))
+		if sim_sink != null:
+			sim_sink.war_end("victory" if claimant_won else "held_out", war_days)
 
 # The terms take effect: the district changes hands, they become a tributary, or they're absorbed
 func _apply_war_goal(r: Relation):
@@ -986,12 +1295,7 @@ func _apply_war_goal(r: Relation):
 		"claim":
 			var d: District = districts[int(r.claim["district"])]
 			if d.owner_id() != by:
-				var owner_before = d.owner_id()
-				var share = maxf(d.share(against), 51.0)
-				d.influence.erase(against)
-				d.add_influence(by, share)
-				d.garrison = 0.0
-				_announce_ownership_change(d, owner_before)
+				_transfer_district(d, by)
 		"subjugate":
 			r.overlord = by
 			r.vassal_since_day = day
@@ -1045,6 +1349,8 @@ func _update_claims():
 				elif r.other(by) == player_id and not r.claim.get("told_early", false) and check_send_early(by, player_id) == "":
 					r.claim["told_early"] = true
 					event.emit("The %s's side now outweighs yours: their ultimatum can come any day. Pay it off, back up your side, or make your own deals in Diplomacy (F4)." % faction_name(by), "alert")
+				elif by == player_id:
+					_watch_own_claim(r)
 			"ultimatum":
 				# The player's answer is a proposal; one left too long is a refusal
 				if day >= int(r.claim["deadline"]) and not proposals.any(func(p): return p["action"] == "ultimatum" and p["from"] == by):
@@ -1054,9 +1360,7 @@ func _update_claims():
 					r.claim = {}
 					continue
 				var against = r.other(by)
-				if r.claim["goal"] == "claim" and districts[int(r.claim["district"])].owner_id() == by:
-					_end_claim_war(r, true)
-				elif r.exhaustion[by] >= 100.0:
+				if r.exhaustion[by] >= 100.0:
 					_end_claim_war(r, false)
 				elif r.exhaustion[against] >= 100.0:
 					_end_claim_war(r, true)
@@ -1196,14 +1500,12 @@ func venture_target(faction_id: String, venture_id: String, district: District) 
 			var owner = district.owner_id()
 			return owner if owner != faction_id else ""
 		"war_border":
-			# The enemy with the biggest hold here
-			var best = ""
-			var best_share = 0.0
-			for enemy_id in war_enemies(faction_id):
-				if district.share(enemy_id) >= 20.0 and district.share(enemy_id) > best_share:
-					best = enemy_id
-					best_share = district.share(enemy_id)
-			return best
+			# An occupied district is retaken from its occupier (by its owner); otherwise the owner at war with you is the target
+			var enemies = war_enemies(faction_id)
+			if district.occupier != "":
+				return district.occupier if district.occupier in enemies and district.owner_id() == faction_id else ""
+			var holder = district.owner_id()
+			return holder if holder in enemies else ""
 	return ""
 
 # What launching a venture costs, including any extra funding
@@ -1483,6 +1785,8 @@ func check_launch(faction_id: String, venture_id: String, district: District, le
 	if is_task(faction_id, venture_id, district) and not as_task:
 		return "Assign a councillor to this as a standing task"
 	var owner = district.owner_id()
+	if district.occupier != "" and def["target"] != "war_border":
+		return "%s is occupied by the %s: nothing can be done there until the war is settled" % [district.district_name, faction_name(district.occupier)]
 	match def["target"]:
 		"unclaimed_border":
 			if owner == faction_id:
@@ -1543,12 +1847,14 @@ func check_launch(faction_id: String, venture_id: String, district: District, le
 		"war_border":
 			if not at_war_with_anyone(faction_id):
 				return "Declare war first (Diplomacy, F4)"
-			# Assault takes land the enemy holds; an enemy's leftover share in your own district is Safeguard's work
-			if owner == faction_id:
-				return "Already yours: assault takes land the enemy holds (Safeguard the Shelter pushes their share out)"
+			# Assault occupies land an enemy owns, or retakes your own land from its occupier
+			if district.occupier == faction_id:
+				return "You already hold it: it stays yours to hold until the war is settled"
+			if owner == faction_id and district.occupier == "":
+				return "Already yours: assault takes land an enemy owns, or retakes your own land from an occupier"
 			if venture_target(faction_id, venture_id, district) == "":
-				return "No faction you're at war with has a real hold here"
-			if not borders_territory(faction_id, district):
+				return "No faction you are at war with owns this district"
+			if owner != faction_id and not borders_territory(faction_id, district):
 				return "Not on your border"
 		"own":
 			if owner != faction_id:
@@ -1777,7 +2083,16 @@ func _resolve(v: ActiveVenture):
 	if def.get("settlers", false) and success:
 		settlers = v.crew - lost
 		d.population += settlers * GameData.rule("settler_population")
-	f.manpower += v.crew - lost - settlers
+	# An assault that wins occupies the district (or retakes your own); half the survivors stay to hold it
+	var holders = 0
+	if result["values"].get("occupy", false) and success:
+		holders = mini(v.crew - lost, maxi(1, ceili((v.crew - lost) * GameData.rule("occupation_crew_share"))))
+		if holders > 0:
+			if d.owner_id() == f.id:
+				liberate(d, f.id, holders)
+			else:
+				occupy(d, f.id, holders)
+	f.manpower += v.crew - lost - settlers - holders
 	if success:
 		_feed_trait(f, v.venture_id, 6.0 if tier == "triumph" else 4.0)
 	if tier == "triumph":
@@ -1793,7 +2108,7 @@ func _resolve(v: ActiveVenture):
 		text += ", %d crew lost" % lost
 	if settlers > 0:
 		text += ", %d settle there for good" % settlers
-	var fate = _leader_outcome(leader, tier, def, v.task)
+	var fate = _leader_outcome(leader, tier, def, v.task, chances["odds"])
 	# A triumph or a disaster can bring a choice about what it means (in place of the next everyday event)
 	if leader and tier in ["triumph", "disaster"] and day >= f.next_event_day:
 		_fire_moment(f.id, "venture_" + tier, leader, v.venture_id)
@@ -1825,7 +2140,14 @@ func _task_run_over(v: ActiveVenture, values: Dictionary):
 
 # What happens to the leader: skill grows with triumphs, setbacks can wound, disasters can kill.
 # Returns a sentence for the log ("" if nothing notable).
-func _leader_outcome(leader: Character, tier: String, def: Dictionary, task_run: bool = false) -> String:
+# The chance a venture's leader dies if it goes this badly (doc 14): the venture's own danger, worse the longer
+# the odds were; standing tasks on home ground are safer. Nothing happens to the leader on a success
+func venture_death_chance(def: Dictionary, tier: String, odds: float, task_run: bool = false) -> float:
+	var weight: float = GameData.rule("death_weight_disaster") if tier == "disaster" else (GameData.rule("death_weight_setback") if tier == "setback" else 0.0)
+	var longer_odds = 0.5 + (1.0 - clampf(odds, 0.0, 1.0))
+	return clampf(def["danger"] * weight * longer_odds * (GameData.rule("task_wound_mult") if task_run else 1.0), 0.0, GameData.rule("death_chance_cap"))
+
+func _leader_outcome(leader: Character, tier: String, def: Dictionary, task_run: bool = false, odds: float = 0.5) -> String:
 	if leader == null:
 		return ""
 	leader.ventures_led += 1
@@ -1846,15 +2168,21 @@ func _leader_outcome(leader: Character, tier: String, def: Dictionary, task_run:
 				leader.skills[skill] += 1
 				notes.append("%s's %s rose to %d" % [leader.name, skill.capitalize(), leader.skills[skill]])
 		"setback":
-			# Standing tasks are familiar work on home ground: they wound half as often
-			if rng.randf() < setback_wound_chance(def) * (GameData.rule("task_wound_mult") if task_run else 1.0):
+			# A failure can kill, by how dangerous the venture is and how long the odds were; or wound (half as often on a standing task)
+			var setback_roll = rng.randf()
+			var setback_death = venture_death_chance(def, tier, odds, task_run)
+			if setback_roll < setback_death:
+				_character_died(leader, "killed leading a %s" % def["label"])
+				return "%s was killed" % leader.name
+			if setback_roll < setback_death + setback_wound_chance(def) * (GameData.rule("task_wound_mult") if task_run else 1.0):
 				notes.append(_wound(leader, def))
 		"disaster":
 			var roll = rng.randf()
-			if roll < GameData.rule("disaster_death_chance"):
+			var death = venture_death_chance(def, tier, odds, task_run)
+			if roll < death:
 				_character_died(leader, "killed leading a %s" % def["label"])
 				return "%s was killed" % leader.name
-			if roll < GameData.rule("disaster_death_chance") + GameData.rule("disaster_wound_chance"):
+			if roll < death + GameData.rule("disaster_wound_chance"):
 				notes.append(_wound(leader, def))
 			_earn_trait(leader, "shaken", notes)
 	if leader.ventures_led >= int(GameData.rule("veteran_ventures")):
@@ -2574,7 +2902,8 @@ func _grow_up(c: Character):
 func monthly_death_chance(c: Character) -> float:
 	if not c.is_adult():
 		return GameData.rule("child_death_chance")
-	var base: float = GameData.rule("leader_death_chance") if c.is_leader else GameData.rule("adult_death_chance")
+	# Age alone decides (doc 14); a leader's extra risk is the ventures they choose to lead
+	var base: float = GameData.rule("adult_death_chance")
 	return base + GameData.rule("age_death_chance") * maxf(c.age - 50, 0)
 
 func yearly_death_chance(c: Character) -> float:
@@ -3097,11 +3426,6 @@ func _announce_ownership_change(d: District, owner_before: String, actor_id: Str
 	_house_lost_land(d)
 	if owner_before != "" and actor_id != "" and is_at_war(owner_before, actor_id):
 		add_exhaustion(owner_before, actor_id, 10.0)
-		# Land taken in a war over a goal counts toward it (the claimed district double)
-		var r = relation(owner_before, actor_id)
-		if r.claim.get("stage", "") == "war":
-			var points: float = GameData.rule("war_points_district") * (2.0 if int(r.claim.get("district", -1)) == d.id else 1.0)
-			r.war_points += points if r.claim["by"] == actor_id else -points
 	var spoils = ""
 	if owner_after != "" and not d.buildings.is_empty():
 		spoils = " Its %s changed hands too." % ", ".join(d.building_labels())
@@ -3133,7 +3457,7 @@ func _announce_trait(f: Faction, trait_name: String):
 # Building effects only work while the owner can pay upkeep
 func buildings_active(district: District) -> bool:
 	var owner: Faction = factions.get(district.owner_id())
-	return owner != null and not owner.broke and not owner.disrepair
+	return district.occupier == "" and owner != null and not owner.broke and not owner.disrepair
 
 # Where a district's building slots come from, as [[label, slots], ...] (for the Build tab's hover)
 func building_slot_parts(district: District) -> Array:
@@ -3458,6 +3782,8 @@ func advance_day():
 		sim_sink.day_end()
 
 func _simulate_district(d: District):
+	if d.occupier != "":
+		_check_occupation(d)
 	var owner = d.owner_id()
 	var owner_faction: Faction = factions.get(owner)
 	var active = buildings_active(d)
@@ -3468,6 +3794,9 @@ func _simulate_district(d: District):
 
 	d.grievance -= 0.15
 	_sim_grievance(d, "daily_calming", -0.15)
+	if d.occupier != "":
+		d.grievance += GameData.rule("occupied_grievance_daily")
+		_sim_grievance(d, "occupation", GameData.rule("occupied_grievance_daily"))
 	if claimants >= 2:
 		d.grievance += 0.35
 		_sim_grievance(d, "rival_claimants", 0.35)
@@ -3509,8 +3838,10 @@ func _simulate_district(d: District):
 		d.ruin_level = clampf(d.ruin_level + d.building_effect("ruin_daily"), 0.0, 1.0)
 		d.development = clampf(d.development + d.building_effect("development_daily"), 0.0, 1.0)
 
-	# Only the owner is paid, and secured land pays more
-	if owner_faction:
+	# Only the owner is paid, and secured land pays more; an occupied district pays nobody and keeps the occupier's garrison
+	if d.occupier != "":
+		pass
+	elif owner_faction:
 		var income = district_income(d)
 		# Tributaries send part of their income to their suzerain: food, materials and wealth (doc 15)
 		var overlord: Faction = factions.get(overlord_of(owner))
@@ -3529,7 +3860,8 @@ func _simulate_district(d: District):
 	else:
 		d.garrison = 0.0
 
-	_check_unrest(d, owner)
+	if d.occupier == "":
+		_check_unrest(d, owner)
 
 func _check_unrest(d: District, owner: String):
 	# Secured districts don't revolt
@@ -4192,6 +4524,10 @@ func _continue_task(t: StandingTask):
 	if d.owner_id() != t.faction_id:
 		_stop_task_end(t, "district_lost")
 		_end_task(t, "%s was lost" % d.district_name, true)
+		return
+	if d.occupier != "":
+		_stop_task_end(t, "district_occupied")
+		_end_task(t, "%s was occupied" % d.district_name, true)
 		return
 	if t.stopping:
 		_end_task(t, "stopped", false)

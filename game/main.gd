@@ -106,10 +106,22 @@ var alert_buttons: Array = []
 var current_alerts: Array = []
 var dismissed_alerts: Dictionary = {}
 var window_slot: PanelContainer
+# War goal window (doc 19): weigh a goal before committing to it, and watch it once it is under way
+var wargoal_box: VBoxContainer
+var wargoal_fid: String = ""
+var wargoal_choice: String = ""
+var wargoal_tab: String = "win"
+var wargoal_signature: String = ""
+# Peace table window (doc 20)
+var peace_box: VBoxContainer
+var peace_fid: String = ""
+var peace_picks: Array = []
+var peace_signature: String = ""
 var window_title: Label
 var window_top: VBoxContainer
 var window_tab_bar: HBoxContainer
 var window_body: VBoxContainer
+var window_foot: VBoxContainer
 var windows: Dictionary = {}
 var open_window: String = ""
 var menu_buttons: Dictionary = {}
@@ -277,6 +289,8 @@ func _build_ui():
 	_build_realm_window()
 	_build_diplomacy_window()
 	_build_ambitions_window()
+	_build_wargoal_window()
+	_build_peace_window()
 	_build_economy_window()
 	_build_log_window()
 	_build_district_panel()
@@ -430,6 +444,9 @@ func _build_window_slot():
 	window_body = VBoxContainer.new()
 	window_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(window_body)
+	# Buttons that stay in view whatever the body scrolls to (a window's own foot is shown with it)
+	window_foot = VBoxContainer.new()
+	box.add_child(window_foot)
 
 # Registers a window: its title, hotkey and (optionally) a header shown above its tabs
 func _window(id: String, title: String, hotkey: String) -> Dictionary:
@@ -460,6 +477,13 @@ func _page(window_id: String, tab_id: String, label: String) -> VBoxContainer:
 		w["current"] = tab_id
 	return page
 
+func _window_foot(window_id: String) -> VBoxContainer:
+	var foot = VBoxContainer.new()
+	foot.visible = false
+	window_foot.add_child(foot)
+	windows[window_id]["foot"] = foot
+	return foot
+
 func _window_top(window_id: String) -> VBoxContainer:
 	var top = VBoxContainer.new()
 	top.visible = false
@@ -475,6 +499,8 @@ func _open_window(id: String, tab: String = ""):
 	window_title.text = w["title"]
 	if w["top"]:
 		w["top"].visible = true
+	if w.get("foot"):
+		w["foot"].visible = true
 	for tab_id in w["order"]:
 		w["tabs"][tab_id]["button"].visible = not (id == "diplomacy" and tab_id == "faction" and panel_fid == "")
 	window_tab_bar.visible = w["order"].size() > 1
@@ -487,6 +513,8 @@ func _hide_window_parts(id: String):
 	var w = windows[id]
 	if w["top"]:
 		w["top"].visible = false
+	if w.get("foot"):
+		w["foot"].visible = false
 	for tab_id in w["order"]:
 		w["tabs"][tab_id]["scroll"].visible = false
 		w["tabs"][tab_id]["button"].visible = false
@@ -917,6 +945,10 @@ func _refresh_open_window():
 		"ambitions":
 			_refresh_ambition_cards()
 			_refresh_ambitions()
+		"wargoal":
+			_refresh_wargoal()
+		"peace":
+			_refresh_peace()
 
 func _refresh_subjects():
 	var me = city.player_id
@@ -1192,7 +1224,7 @@ func _refresh_alerts(economy: Dictionary):
 			var them = fid
 			var days = int(rc.claim["ready_day"]) - city.day
 			var earliest = city.claim_notice_left(rc)
-			list.append(_alert("claim:" + fid, "urgent", "Claim %s" % (("%dd" % days) if earliest >= days else ("%d-%dd" % [earliest, days])),
+			list.append(_alert("claim:" + fid, "urgent", "Claim %s" % (("%dd" % days) if earliest >= days else (("up to %dd" % days) if earliest <= 0 else ("%d-%dd" % [earliest, days]))),
 				city.claim_notice_text(rc, p.id) + "\nGive in then, or it's war over it. Make yourself stronger (arms, guards, allies), or talk to them. Click for diplomacy.",
 				func(): _open_faction_panel(them, Vector2(-1, -1))))
 	if home and home.owner_id() != p.id:
@@ -1756,24 +1788,15 @@ func _make_card(fid: String) -> Dictionary:
 	var war_button = _button("", func(): _on_war_button_pressed(fid))
 	war_button.mouse_entered.connect(func(): hovered_diplomacy[fid] = "war"; _refresh_diplomacy())
 	flow.add_child(war_button)
-	# War goals (doc 15): justify one, and the ultimatum follows; at war, take your terms or give in to theirs
+	# War goals (doc 19): one button opens the war goal window, where the goal is weighed before anything is paid
 	var goals = {}
-	for goal_id in CityMap.WAR_GOALS:
-		var g = goal_id
-		var b = _button("", func(): _on_goal_pressed(g, fid))
-		b.mouse_entered.connect(func(): hovered_diplomacy[fid] = "goal_" + g; _refresh_diplomacy())
-		flow.add_child(b)
-		goals[goal_id] = b
-	var settle_war = _button("", func(): _on_settle_war_pressed(fid))
+	var open_goal = _button("War goal...", func(): _open_wargoal(fid))
+	open_goal.mouse_entered.connect(func(): hovered_diplomacy[fid] = "goal_open"; _refresh_diplomacy())
+	flow.add_child(open_goal)
+	goals["open"] = open_goal
+	var settle_war = _button("Peace table...", func(): _open_peace(fid))
 	settle_war.mouse_entered.connect(func(): hovered_diplomacy[fid] = "settle_war"; _refresh_diplomacy())
 	flow.add_child(settle_war)
-	# Your claim under way: send the ultimatum early (when strong enough), or drop it
-	var send_now = _button("Send ultimatum now", func(): _on_claim_action(fid, "send"))
-	send_now.mouse_entered.connect(func(): hovered_diplomacy[fid] = "send_now"; _refresh_diplomacy())
-	flow.add_child(send_now)
-	var withdraw = _button("Withdraw claim", func(): _on_claim_action(fid, "withdraw"))
-	withdraw.mouse_entered.connect(func(): hovered_diplomacy[fid] = "withdraw"; _refresh_diplomacy())
-	flow.add_child(withdraw)
 	# Why the greyed-out actions can't be taken, spelled out rather than hidden in tooltips
 	var blocked = _rich()
 	blocked.custom_minimum_size.x = CARD_WIDTH
@@ -1781,7 +1804,7 @@ func _make_card(fid: String) -> Dictionary:
 	var detail = _rich()
 	detail.custom_minimum_size.x = CARD_WIDTH
 	card.add_child(detail)
-	return {"root": card, "info": info, "actions": actions, "breaks": breaks, "war": war_button, "goals": goals, "settle_war": settle_war, "send_now": send_now, "withdraw": withdraw, "blocked": blocked, "detail": detail, "council": council, "council_signature": ""}
+	return {"root": card, "info": info, "actions": actions, "breaks": breaks, "war": war_button, "goals": goals, "settle_war": settle_war, "blocked": blocked, "detail": detail, "council": council, "council_signature": ""}
 
 # --- Faction panel (right-click a faction's territory) ------------------------------
 
@@ -2013,54 +2036,22 @@ func _refresh_card(row: Dictionary, fid: String):
 	row["breaks"]["vassal"].visible = r.overlord != ""
 	# At war: peace (a white peace when there's a goal: it lapses). At peace: justify a war goal instead of declaring war
 	var war_button: Button = row["war"]
-	war_button.visible = r.at_war
-	if r.at_war:
-		war_button.text = "Accept their peace offer" if r.peace_offered_by == fid else ("Offer white peace" if not r.claim.is_empty() else "Offer peace")
-		var err = city.check_peace(me, fid)
-		war_button.disabled = err != ""
-		war_button.tooltip_text = err
-		if err != "":
-			blocked.append("[color=#bbbbbb]Peace:[/color] %s" % err)
-	var goal_errors = []
-	for goal_id in row["goals"]:
-		var b: Button = row["goals"][goal_id]
-		b.visible = not r.at_war and r.claim.is_empty()
-		if not b.visible:
-			continue
-		var target = city.claim_district(me, fid, selected)
-		var cost = _cost_text(city.justify_cost(me, fid, goal_id))
-		b.text = ("Claim %s (%s)" % [target.district_name, cost]) if goal_id == "claim" and target else "%s (%s)" % [GameData.war_goal(goal_id)["label"], cost]
-		var err = city.check_justify(me, fid, goal_id, selected)
-		b.disabled = err != ""
-		b.tooltip_text = err
-		if err != "" and err not in goal_errors:
-			goal_errors.append(err)
-	if not goal_errors.is_empty():
-		blocked.append("[color=#bbbbbb]War goals:[/color] %s" % "; ".join(goal_errors))
-	# Your claim before any war: send the ultimatum early when your side is strong enough, or withdraw it
-	var mine_pending = r.claim.get("by", "") == me and r.claim["stage"] != "war"
-	var send_now: Button = row["send_now"]
-	send_now.visible = mine_pending and r.claim["stage"] == "justifying"
-	if send_now.visible:
-		var err = city.check_send_early(me, fid)
-		send_now.disabled = err != ""
-		send_now.tooltip_text = err
-		if err != "":
-			blocked.append("[color=#bbbbbb]Send ultimatum now:[/color] %s; ask other factions to back your claim" % err)
-	row["withdraw"].visible = mine_pending
+	# Their standing offer is answered here; every other way to end the war is in the peace table
+	war_button.visible = r.at_war and r.peace_offered_by == fid
+	if war_button.visible:
+		war_button.text = "Accept their peace offer"
+		war_button.disabled = city.check_peace(me, fid) != ""
+		war_button.tooltip_text = "Ends the war with nothing changed: every occupied district goes back to its owner. A truce of %d days follows." % GameData.rule("truce_days")
+	# War goals (doc 19): the window weighs a goal before anything is paid, and holds your claim once it is under way
+	var open_goal: Button = row["goals"]["open"]
+	var mine_claim = r.claim.get("by", "") == me
+	open_goal.visible = not r.at_war and (r.claim.is_empty() or mine_claim)
+	open_goal.text = "Open your claim" if mine_claim else "War goal..."
+	open_goal.disabled = false
 	# In a war over a goal: the claimant takes its terms when it can; the other side can give in
 	var settle: Button = row["settle_war"]
-	settle.visible = r.at_war and r.claim.get("stage", "") == "war"
-	if settle.visible:
-		if r.claim["by"] == me:
-			settle.text = "Enforce: %s" % city.claim_text(r)
-			var err = city.check_enforce(me, fid)
-			settle.disabled = err != ""
-			settle.tooltip_text = err
-		else:
-			settle.text = "Give in to their terms"
-			settle.disabled = false
-			settle.tooltip_text = "End the war on their terms: %s." % city.claim_text(r, city.player_id)
+	settle.visible = r.at_war
+	settle.disabled = false
 	row["blocked"].text = ("[font_size=13][color=#e3a86f]Not available now[/color]\n[color=#999999]%s[/color][/font_size]" % "\n".join(blocked)) if blocked.size() > 0 else ""
 	row["detail"].text = _diplomacy_detail(fid, hovered_diplomacy.get(fid, ""))
 
@@ -2079,20 +2070,11 @@ func _diplomacy_detail(fid: String, action_id: String) -> String:
 				return "Frees them. They'll be grateful (opinion +20), but you lose their tribute."
 			return "Stop paying tribute. Your suzerain will declare war on you."
 		"war":
-			return "Ends the war with no terms: any war goal lapses, and a truce holds for %d days." % GameData.rule("truce_days")
-		"send_now":
-			var rn = city.relation(me, fid)
-			if rn.claim.is_empty():
-				return ""
-			return "Sends your ultimatum now, before the claim is fully justified. Possible once your side (with allies and backers) is %.1fx theirs: strong enough that they'd likely give in (now %.1fx). Ask other factions to back your claim to get there sooner." % [
-				GameData.war_goal(rn.claim["goal"])["accept_need"], city.claim_strength_ratio(rn)]
-		"withdraw":
-			return "Drops your claim. What you paid to justify it is gone, and their grudge fades in time."
+			return "Ends the war with nothing changed: every occupied district goes back to its owner. A truce holds for %d days." % GameData.rule("truce_days")
 		"settle_war":
-			var rs = city.relation(me, fid)
-			if rs.claim.get("by", "") == me:
-				return "Takes your terms (%s) and ends the war. Possible once the war score reaches %d: fights won and land taken (the claimed district counts double), and being less worn out than them." % [city.claim_text(rs), GameData.war_goal(rs.claim["goal"])["price"]]
-			return "Ends the war on their terms (%s). Otherwise it ends when their war score reaches %d, a side is worn out (at 100 the worn-out side loses), or by peace." % [city.claim_text(rs), GameData.war_goal(rs.claim["goal"])["price"]]
+			return "Opens the peace table: the war score and where it comes from, what you can demand with it (or what they can demand of you), and a white peace. Opening it is free."
+	if action_id == "goal_open":
+		return "Opens the war goal window: weigh your position, pick what to press, and see what winning or losing would mean. Nothing is paid until you begin."
 	if action_id.begins_with("goal_"):
 		var goal_id = action_id.substr(5)
 		var goal = GameData.war_goal(goal_id)
@@ -2210,18 +2192,6 @@ func _claim_status(r: Relation) -> String:
 				city.war_score(r), GameData.war_goal(r.claim["goal"])["price"]]
 	return ""
 
-func _on_goal_pressed(goal_id: String, faction_id: String):
-	var err = city.justify(city.player_id, faction_id, goal_id, selected)
-	if err != "":
-		_log(err, "bad")
-	_refresh()
-
-func _on_claim_action(faction_id: String, what: String):
-	var err = city.send_ultimatum_early(city.player_id, faction_id) if what == "send" else city.withdraw_claim(city.player_id, faction_id)
-	if err != "":
-		_log(err, "bad")
-	_refresh()
-
 # Take your terms (you pressed the claim) or give in to theirs (they did)
 func _on_settle_war_pressed(faction_id: String):
 	var r = city.relation(city.player_id, faction_id)
@@ -2235,6 +2205,373 @@ func _on_war_button_pressed(faction_id: String):
 	var err = city.make_peace(city.player_id, faction_id)
 	if err != "":
 		_log(err, "bad")
+	_refresh()
+
+# --- War goal window (doc 19) -------------------------------------------------------------------
+# Opening it is free and commits nothing: it is the information for the decision. Only the commit button costs.
+
+const WG_WIDTH = 500
+const WG_TONES = {"good": "#8bd48b", "bad": "#e3876f", "plain": "#c9c9c9"}
+
+func _build_wargoal_window():
+	_window("wargoal", "War goal", "")
+	var page = _page("wargoal", "goal", "War goal")
+	wargoal_box = VBoxContainer.new()
+	wargoal_box.custom_minimum_size.x = WG_WIDTH
+	wargoal_box.add_theme_constant_override("separation", 6)
+	page.add_child(wargoal_box)
+	_window_foot("wargoal")
+
+func _open_wargoal(fid: String):
+	if fid == city.player_id or not city.factions.has(fid):
+		return
+	wargoal_fid = fid
+	wargoal_tab = "win"
+	wargoal_signature = ""
+	var d = city.claim_district(city.player_id, fid, selected)
+	wargoal_choice = ("d:%d" % d.id) if d else "subjugate"
+	_open_window("wargoal")
+	window_title.text = "War goal: %s" % city.faction_name(fid)
+	_refresh_wargoal()
+
+func _wargoal_pick(choice: String):
+	wargoal_choice = choice
+	wargoal_signature = ""
+	_refresh_wargoal()
+
+func _wargoal_set_tab(tab: String):
+	wargoal_tab = tab
+	wargoal_signature = ""
+	_refresh_wargoal()
+
+func _wg_label(text: String) -> RichTextLabel:
+	var l = _rich()
+	l.custom_minimum_size.x = WG_WIDTH
+	l.text = text
+	return l
+
+func _wg_names(ids: Array) -> String:
+	if ids.is_empty():
+		return "nobody"
+	return ", ".join(ids.map(func(f): return "[color=%s]%s[/color]" % [_hex(f), city.faction_name(f)]))
+
+# A bar of two stretches, left and right, in proportion
+func _wg_bar(left: float, right: float, left_color: Color, right_color: Color, tip: String = "") -> HBoxContainer:
+	var bar = HBoxContainer.new()
+	bar.custom_minimum_size = Vector2(WG_WIDTH, 14)
+	bar.add_theme_constant_override("separation", 0)
+	for part in [[left, left_color], [right, right_color]]:
+		if part[0] <= 0.0:
+			continue
+		var block = ColorRect.new()
+		block.color = part[1]
+		block.custom_minimum_size.y = 14
+		block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		block.size_flags_stretch_ratio = part[0]
+		block.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bar.add_child(block)
+	if tip != "":
+		bar.mouse_filter = Control.MOUSE_FILTER_STOP
+		bar.tooltip_text = tip
+	return bar
+
+func _refresh_wargoal():
+	if wargoal_fid == "" or not city.factions.has(wargoal_fid):
+		_close_window()
+		return
+	var me = city.player_id
+	var fid = wargoal_fid
+	var f: Faction = city.factions[me]
+	var r = city.relation(me, fid)
+	var under_way = r.claim.get("by", "") == me
+	var signature = str([city.day, fid, wargoal_choice, wargoal_tab, r.claim.get("stage", ""), int(f.wealth), int(f.renown), r.at_war, r.claim.get("step", -1)])
+	if signature == wargoal_signature:
+		return
+	wargoal_signature = signature
+	for child in wargoal_box.get_children():
+		child.queue_free()
+	for child in windows["wargoal"]["foot"].get_children():
+		child.queue_free()
+	# What is being pressed: your claim under way, or the row picked in the list
+	var goal_id = ""
+	var d: District = null
+	if under_way:
+		goal_id = r.claim["goal"]
+		d = city.districts[int(r.claim["district"])] if int(r.claim["district"]) >= 0 else null
+	elif wargoal_choice.begins_with("d:"):
+		goal_id = "claim"
+		d = city.districts[int(wargoal_choice.substr(2))]
+	else:
+		goal_id = wargoal_choice
+	var box = wargoal_box
+	# Header: the two leaders and what each side has
+	var mine = city.leader_of(me)
+	var theirs = city.leader_of(fid)
+	var other: Faction = city.factions[fid]
+	box.add_child(_wg_label("[b]%s[/b] [color=#999999](you), %s: crew %d, arms %d, wealth %d[/color]\n[b][color=%s]%s[/color][/b][color=#999999], %s: crew %d, arms %d, wealth %d[/color]" % [
+		city.faction_name(me), mine.name if mine else "nobody", f.manpower, f.arms, f.wealth,
+		_hex(fid), city.faction_name(fid), theirs.name if theirs else "nobody", other.manpower, other.arms, other.wealth]))
+	# The balance, as a bar and a sentence
+	var yours_s = city.side_strength(me, fid)
+	var theirs_s = city.side_strength(fid, me)
+	var ratio = city.their_over_your(me, fid)
+	box.add_child(_wg_bar(yours_s, theirs_s, Color(0.35, 0.55, 0.85), Color(0.8, 0.35, 0.35),
+		"Each side's strength: crew, arms, command, land and garrisons, plus allies in full, backers, and tributaries at a share.\nTheir side against yours: much weaker under 0.5x, weaker to 0.8x, similar to 1.25x, stronger to 2x, much stronger above."))
+	box.add_child(_wg_label("Their side is [b]%s[/b] yours (%.1fx: yours %d, theirs %d)" % [CityMap.STRENGTH_WORDS[city.strength_step(ratio)], ratio, yours_s, theirs_s]))
+	var sides = city.war_sides(me, fid)
+	box.add_child(_wg_label("[color=#999999]With you:[/color] %s   [color=#999999]With them:[/color] %s" % [_wg_names(sides[0]), _wg_names(sides[1])]))
+	if under_way:
+		_wargoal_under_way(box, r, fid, goal_id)
+		return
+	# One list of objectives: each bordering district, then the faction itself
+	box.add_child(_header("Objective"))
+	var picks = []
+	var candidates = city.claim_candidates(me, fid)
+	for cand in candidates:
+		picks.append(["d:%d" % cand.id, "Acquire %s  (people %d, garrison %d)" % [cand.district_name, cand.population, cand.garrison]])
+	picks.append(["subjugate", "Subjugate the %s" % city.faction_name(fid)])
+	picks.append(["vassalize", "Vassalize the %s" % city.faction_name(fid)])
+	for pick in picks:
+		var key: String = pick[0]
+		var b = _button(pick[1], func(): _wargoal_pick(key))
+		b.toggle_mode = true
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.set_pressed_no_signal(key == wargoal_choice)
+		box.add_child(b)
+	if candidates.is_empty():
+		box.add_child(_wg_label("[color=#999999]None of their districts borders yours, so there is nothing to acquire yet.[/color]"))
+	# What each ending would mean
+	var outcomes = city.goal_outcomes(fid, goal_id, d)
+	var tabs = HBoxContainer.new()
+	for tab in [["win", "If they give in or you win"], ["lose", "If you lose"]]:
+		var t: String = tab[0]
+		var tb = _button(tab[1], func(): _wargoal_set_tab(t))
+		tb.toggle_mode = true
+		tb.set_pressed_no_signal(t == wargoal_tab)
+		tabs.add_child(tb)
+	box.add_child(tabs)
+	var lines = []
+	for line in outcomes[wargoal_tab]:
+		lines.append("[color=%s]%s[/color]" % [WG_TONES[line[0]], line[1]])
+	box.add_child(_wg_label("\n".join(lines)))
+	# Requirements, with ticks and crosses
+	box.add_child(_header("Requirements"))
+	var marks = {"ok": "[color=#8bd48b]✓ %s[/color]", "warn": "[color=#e3a86f]! %s[/color]", "no": "[color=#e3876f]✗ %s[/color]"}
+	var reqs = []
+	for req in city.justify_requirements(me, fid, goal_id, d):
+		reqs.append(marks[req[0]] % req[1])
+	box.add_child(_wg_label("\n".join(reqs)))
+	# When the ultimatum could come, and how likely they are to give in
+	var days = city.justify_days(me, fid, goal_id)
+	var notice = mini(int(GameData.rule("min_claim_notice_days")), days)
+	box.add_child(_header("Ultimatum"))
+	box.add_child(_wg_bar(notice, days - notice, Color(0.45, 0.45, 0.45), Color(0.35, 0.55, 0.85)))
+	var need: float = GameData.war_goal(goal_id)["accept_need"]
+	box.add_child(_wg_label("Between %d and %d days after you begin: they are told at once, and it can't come sooner than the %d days' notice.\nThey would give in today: [b]%d%%[/b]. Sending it early needs your side at %.1fx theirs (it is %.1fx now)." % [
+		notice, days, notice, city.acceptance_of_goal(me, fid, goal_id) * 100, need, 1.0 / maxf(0.01, ratio)]))
+	# The commit: the cost sits on the button, and nothing is paid before it
+	var err = city.check_justify(me, fid, goal_id, d)
+	var footer = HBoxContainer.new()
+	footer.alignment = BoxContainer.ALIGNMENT_END
+	footer.add_theme_constant_override("separation", 8)
+	footer.add_child(_button("Not now", func(): _close_window()))
+	var commit = _button("Begin justifying (%s)" % city.cost_words(city.justify_cost(me, fid, goal_id)), func(): _wargoal_commit(goal_id, d))
+	commit.disabled = err != ""
+	commit.tooltip_text = err
+	footer.add_child(commit)
+	windows["wargoal"]["foot"].add_child(footer)
+
+# Your claim under way: the trend since you began, and the two things you can do about it
+func _wargoal_under_way(box: VBoxContainer, r: Relation, fid: String, goal_id: String):
+	var me = city.player_id
+	box.add_child(_wg_label("[b]Objective:[/b] %s" % city.claim_text(r, me)))
+	var start_ratio = 1.0 / maxf(0.01, float(r.claim.get("start_ratio", 1.0)))
+	var now_ratio = city.their_over_your(me, fid)
+	var start_step = city.strength_step(start_ratio)
+	var now_step = city.strength_step(now_ratio)
+	var grew = int(city.faction_strength(fid) - float(r.claim.get("start_their_strength", city.faction_strength(fid))))
+	var color = "#e3876f" if now_step > start_step else ("#8bd48b" if now_step < start_step else "#c9c9c9")
+	box.add_child(_wg_label("When you began, their side was %s yours (%.1fx).\n[color=%s]Now it is [b]%s[/b] yours (%.1fx); their own strength %+d since.[/color]" % [
+		CityMap.STRENGTH_WORDS[start_step], start_ratio, color, CityMap.STRENGTH_WORDS[now_step], now_ratio, grew]))
+	match r.claim["stage"]:
+		"justifying":
+			box.add_child(_header("Ultimatum"))
+			var latest = int(r.claim["ready_day"]) - city.day
+			var left = city.claim_notice_left(r)
+			box.add_child(_wg_bar(minf(left, latest), maxf(latest - left, 0.0), Color(0.45, 0.45, 0.45), Color(0.35, 0.55, 0.85)))
+			var need: float = GameData.war_goal(goal_id)["accept_need"]
+			box.add_child(_wg_label("It goes out in %s. They would give in today: [b]%d%%[/b]. Sending it early needs your side at %.1fx theirs (it is %.1fx now)%s." % [
+				city.claim_clock(r), city.ultimatum_acceptance(r) * 100, need, city.claim_strength_ratio(r),
+				(", after %d more days of notice" % left) if left > 0 else ""]))
+			var footer = HBoxContainer.new()
+			footer.alignment = BoxContainer.ALIGNMENT_END
+			footer.add_theme_constant_override("separation", 8)
+			var back = _button("Back down (what you paid is lost, -%d renown, a truce)" % GameData.rule("claim_failed_renown"), func(): _wargoal_claim_action("withdraw", fid))
+			back.tooltip_text = "Drops your claim. What you paid to justify it is gone, you lose %d renown, the target and onlookers hold it against you for a while, and a truce of %d days follows." % [GameData.rule("claim_failed_renown"), GameData.rule("truce_days")]
+			footer.add_child(back)
+			var early_err = city.check_send_early(me, fid)
+			var early = _button("Send ultimatum early", func(): _wargoal_claim_action("send", fid))
+			early.disabled = early_err != ""
+			early.tooltip_text = early_err
+			footer.add_child(early)
+			windows["wargoal"]["foot"].add_child(footer)
+			if early_err != "":
+				box.add_child(_wg_label("[color=#999999]Not yet: %s[/color]" % early_err))
+		"ultimatum":
+			box.add_child(_wg_label("[color=#e3a86f]The ultimatum is out. Their answer is due in %d days.[/color]" % (int(r.claim["deadline"]) - city.day)))
+		_:
+			box.add_child(_wg_label("[color=#e3a86f]At war over it. See the war in the Diplomacy window.[/color]"))
+
+func _wargoal_commit(goal_id: String, d: District):
+	var err = city.justify(city.player_id, wargoal_fid, goal_id, d)
+	if err != "":
+		_log(err, "bad")
+	wargoal_signature = ""
+	_refresh()
+
+func _wargoal_claim_action(what: String, fid: String):
+	var err = city.send_ultimatum_early(city.player_id, fid) if what == "send" else city.withdraw_claim(city.player_id, fid)
+	if err != "":
+		_log(err, "bad")
+	wargoal_signature = ""
+	_refresh()
+
+# --- Peace table window (doc 20) ----------------------------------------------------------------
+# Where a war is settled: the war score and where it comes from, what you can demand with it (or what they can
+# demand of you), and a white peace. Opening it is free.
+
+func _build_peace_window():
+	_window("peace", "Peace table", "")
+	var page = _page("peace", "table", "Peace table")
+	peace_box = VBoxContainer.new()
+	peace_box.custom_minimum_size.x = WG_WIDTH
+	peace_box.add_theme_constant_override("separation", 6)
+	page.add_child(peace_box)
+	_window_foot("peace")
+
+func _open_peace(fid: String):
+	if fid == city.player_id or not city.factions.has(fid):
+		return
+	peace_fid = fid
+	peace_picks = []
+	peace_signature = ""
+	_open_window("peace")
+	window_title.text = "Peace table: %s" % city.faction_name(fid)
+	_refresh_peace()
+
+func _peace_toggle(id: String):
+	if id in peace_picks:
+		peace_picks.erase(id)
+	else:
+		peace_picks.append(id)
+	peace_signature = ""
+	_refresh_peace()
+
+func _refresh_peace():
+	if peace_fid == "" or not city.factions.has(peace_fid):
+		_close_window()
+		return
+	var me = city.player_id
+	var fid = peace_fid
+	var r = city.relation(me, fid)
+	if not r.at_war:
+		_close_window()
+		return
+	var signature = str([city.day, fid, peace_picks, r.claim.get("stage", ""), int(city.war_score(r))])
+	if signature == peace_signature:
+		return
+	peace_signature = signature
+	var foot = windows["peace"]["foot"]
+	for child in foot.get_children():
+		child.queue_free()
+	for child in peace_box.get_children():
+		child.queue_free()
+	var box = peace_box
+	var has_goal = r.claim.get("stage", "") == "war"
+	var mine = has_goal and r.claim["by"] == me
+	var score = city.war_score(r) * (1.0 if mine else -1.0) if has_goal else 0.0
+	box.add_child(_wg_label("[b]%s[/b] [color=#999999](you)[/color] at war with [b][color=%s]%s[/color][/b], day %d of the war" % [
+		city.faction_name(me), _hex(fid), city.faction_name(fid), city.day - r.war_start_day]))
+	if not has_goal:
+		box.add_child(_wg_label("[color=#c9c9c9]This war has no war goal, so there is no score to spend. It can end in a white peace.[/color]"))
+	else:
+		var price: float = GameData.war_goal(r.claim["goal"])["price"]
+		box.add_child(_wg_bar(score + 100.0, 100.0 - score, Color(0.35, 0.55, 0.85), Color(0.8, 0.35, 0.35),
+			"War score, from your side: land occupied, fights won, the clock, and who is more worn down. The claimant's goal needs %d; at -%d the other side has won." % [price, price]))
+		var parts = city.war_score_parts(r)
+		var sign = 1.0 if mine else -1.0
+		box.add_child(_wg_label("War score [b]%+d[/b] for you (the goal needs %+d for the claimant)\n[color=#999999]Land occupied: yours %d, theirs %d. Fights %+d. Clock %+d. Exhaustion %+d.[/color]" % [
+			score, price, (parts["occupation_for"] if mine else parts["occupation_against"]), (parts["occupation_against"] if mine else parts["occupation_for"]),
+			parts["battles"] * sign, (parts["clock_for"] - parts["clock_against"]) * sign, parts["exhaustion"] * sign]))
+		var held = city.occupied_by(me, fid)
+		var lost = city.occupied_by(fid, me)
+		box.add_child(_wg_label("[color=#999999]You hold:[/color] %s\n[color=#999999]They hold:[/color] %s" % [
+			", ".join(held.map(func(d): return d.district_name)) if not held.is_empty() else "nothing",
+			", ".join(lost.map(func(d): return d.district_name)) if not lost.is_empty() else "nothing"]))
+	var footer = HBoxContainer.new()
+	footer.alignment = BoxContainer.ALIGNMENT_END
+	footer.add_theme_constant_override("separation", 8)
+	if mine:
+		box.add_child(_header("Your demands"))
+		var demands = city.peace_demands(me, fid)
+		var budget = score - demands[0]["cost"]
+		var spent = 0.0
+		for demand in demands:
+			var id: String = demand["id"]
+			var chosen = id == "goal" or id in peace_picks
+			if chosen and id != "goal":
+				spent += demand["cost"]
+			var b = _button("%s%s  (%d score)" % ["[x] " if chosen else "[ ] ", demand["label"], demand["cost"]], func(): _peace_toggle(id))
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.disabled = id == "goal"
+			box.add_child(b)
+		var err = city.check_enforce(me, fid)
+		box.add_child(_wg_label("Score to spend after the goal: [b]%d[/b], chosen %d%s" % [maxf(budget, 0.0), spent, "" if err == "" else "\n[color=#e3876f]✗ %s[/color]" % err]))
+		var enforce = _button("Enforce demands", func(): _peace_enforce())
+		enforce.disabled = err != "" or spent > maxf(budget, 0.0)
+		enforce.tooltip_text = err if err != "" else ("Costs more war score than you have" if spent > maxf(budget, 0.0) else "Takes the goal and the demands ticked, ends the war, and a truce of %d days follows." % GameData.rule("truce_war_days"))
+		footer.add_child(enforce)
+	elif has_goal:
+		box.add_child(_header("Their demands"))
+		var theirs = city.peace_demands(fid, me)
+		box.add_child(_wg_label("If they win they can take: %s." % city.claim_text(r, me)))
+		if theirs.size() > 1:
+			var held_by_them = city.occupied_by(fid, me)
+			box.add_child(_wg_label("[color=#999999]Extra, with more score: %s.[/color]" % ", ".join(held_by_them.map(func(d): return d.district_name))))
+		var give_in = _button("Give in to their terms", func(): _peace_give_in())
+		give_in.tooltip_text = "Ends the war on their terms: %s. A truce of %d days follows." % [city.claim_text(r, me), GameData.rule("truce_war_days")]
+		footer.add_child(give_in)
+	# A white peace: the status quo, if they will take it
+	var peace_err = city.check_peace(me, fid)
+	var white = _button("Offer white peace", func(): _peace_white())
+	white.disabled = peace_err != ""
+	white.tooltip_text = peace_err if peace_err != "" else "Ends the war with nothing changed: every occupied district goes back to its owner and its crew go home. A truce of %d days follows.%s" % [
+		GameData.rule("truce_days"), ("\nYou pressed the claim: backing off costs %d renown and your name with them and onlookers." % GameData.rule("claim_failed_renown")) if mine else ""]
+	footer.add_child(white)
+	foot.add_child(footer)
+	if peace_err != "":
+		box.add_child(_wg_label("[color=#999999]White peace: %s[/color]" % peace_err))
+
+func _peace_enforce():
+	var err = city.enforce_claim(city.player_id, peace_fid, peace_picks)
+	if err != "":
+		_log(err, "bad")
+	peace_picks = []
+	peace_signature = ""
+	_refresh()
+
+func _peace_give_in():
+	var err = city.concede_claim(city.player_id, peace_fid)
+	if err != "":
+		_log(err, "bad")
+	peace_signature = ""
+	_refresh()
+
+func _peace_white():
+	var err = city.make_peace(city.player_id, peace_fid)
+	if err != "":
+		_log(err, "bad")
+	peace_signature = ""
 	_refresh()
 
 # --- Venture planner ----------------------------------------------------------------
@@ -3396,6 +3733,9 @@ func _refresh_district_info():
 		_stat("control", true, "Their control %d" % d.share(owner), "The %s's hold on it. Take it by war (Assault) or by agitating it into revolt.%s" % [city.faction_name(owner), share_text])
 	else:
 		_stat("control", true, "Claim %d/%d" % [d.share(p.id), claim], "Unclaimed: pays nobody. Scout it, Scavenge it (+3 influence each), then Settle it (+30; the settlers stay). %d influence claims it.%s" % [claim, share_text])
+	# Occupied: out of order until the war is settled (doc 20); this chip replaces the control one
+	if d.occupier != "" and city.factions.has(d.occupier):
+		_stat("control", true, "Occupied by %s" % city.faction_name(d.occupier), "Held by the %s since day %d. It pays nobody and nothing can be done there until the war is settled or the owner retakes it with an Assault. The %d crew who took it are its garrison." % [city.faction_name(d.occupier), d.occupied_day, d.garrison], Color(0.95, 0.5, 0.4))
 	# What this district has earned by reaching its ceilings, and what's still missing
 	var pay = city.district_payoffs(d)
 	var earned = ["cleared", "safe", "rebuilt"].filter(func(k): return pay[k]).map(func(k): return k.capitalize())
@@ -3730,8 +4070,9 @@ func _percent(chance: float) -> String:
 
 # Chance the leader comes back wounded, and chance they don't come back, as [wounded, killed]
 func _leader_risk(def: Dictionary, tiers: Dictionary) -> Array:
+	var odds: float = tiers["triumph"] + tiers["success"]
 	return [tiers["setback"] * city.setback_wound_chance(def) + tiers["disaster"] * GameData.rule("disaster_wound_chance"),
-		tiers["disaster"] * GameData.rule("disaster_death_chance")]
+		tiers["setback"] * city.venture_death_chance(def, "setback", odds) + tiers["disaster"] * city.venture_death_chance(def, "disaster", odds)]
 
 # Why a venture's chance is what it is, in plain words, what would raise it, and what the leader risks
 func _odds_explainer(venture_id: String, d: District, leader: Character, crew: int, funding: int, result: Dictionary) -> String:
@@ -3839,9 +4180,10 @@ func _odds_tooltip(def: Dictionary, explainer: String, result: Dictionary) -> St
 	lines.append("")
 	lines.append("Triumph %d%%: %s; %s. The leader may improve." % [tiers["triumph"] * 100, def["on_success"], def.get("on_triumph", "")])
 	lines.append("Success %d%%: %s" % [tiers["success"] * 100, def["on_success"]])
-	lines.append("Setback %d%%: %s. The leader may be wounded (%d%%)." % [tiers["setback"] * 100, def["on_failure"], city.setback_wound_chance(def) * 100])
+	var odds: float = tiers["triumph"] + tiers["success"]
+	lines.append("Setback %d%%: %s. The leader may be wounded (%d%%) or killed (%s)." % [tiers["setback"] * 100, def["on_failure"], city.setback_wound_chance(def) * 100, _percent(city.venture_death_chance(def, "setback", odds))])
 	lines.append("Disaster %d%%: %s; %s. The leader may be killed (%d%%) or wounded (%d%%)." % [tiers["disaster"] * 100, def["on_failure"], def.get("on_disaster", ""),
-		GameData.rule("disaster_death_chance") * 100, GameData.rule("disaster_wound_chance") * 100])
+		_percent(city.venture_death_chance(def, "disaster", odds)), GameData.rule("disaster_wound_chance") * 100])
 	return "\n".join(lines)
 
 # --- Build tab --------------------------------------------------------------------------------

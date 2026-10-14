@@ -67,6 +67,16 @@ func revolt(district_id: int):
 	var d: District = city.districts[district_id]
 	_line("REVOLT" if d.owner_id() == city.player_id else "revolt", "%s (grievance %d)" % [_name(d), d.grievance])
 
+func occupied(district_id: int, by_id: String):
+	var d: District = city.districts[district_id]
+	_line("OCCUPIED" if d.owner_id() == city.player_id or by_id == city.player_id else "occupied", "%s held by %s, owned by %s" % [_name(d), by_id, d.owner_id()])
+
+func liberated(district_id: int, by_id: String):
+	_line("LIBERATED", "%s retaken by %s" % [_name(city.districts[district_id]), by_id])
+
+func war_end(how: String, days: int):
+	_line("WAR_END", "%s after %d days" % [how, days])
+
 func day_end():
 	if city.day % MONTH_DAYS != 0:
 		return

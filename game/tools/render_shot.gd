@@ -122,6 +122,48 @@ func _setup(scenario: String):
 			paused = false
 			city.event.emit("WAR! The Rust Dogs have declared war on you. Expect assaults on your border districts.", "alert")
 			_open_window.call_deferred("economy", "economy")
+		"peace":
+			# A war with occupations: the peace table (doc 20)
+			var foe = ""
+			for fid in city.factions:
+				if fid != me and city.shares_border(me, fid):
+					foe = fid
+					break
+			if foe != "":
+				for rel in city.relations.values():
+					if rel.involves(me):
+						rel.claim = {}
+				city.relation(me, foe).truce_until_day = 0
+				city.factions[me].renown = 200.0
+				city.factions[me].wealth = 500.0
+				city.relation(me, foe).claim = {"by": me, "goal": "claim", "district": city.claim_district(me, foe).id, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0, "started": city.day}
+				city.start_war(me, foe)
+				var taken = city.claim_candidates(me, foe)
+				for i in mini(taken.size(), 2):
+					taken[i].occupier = me
+					taken[i].garrison = 6.0
+				city.relation(me, foe).war_points = 12.0
+				event_queue.clear()
+				_open_peace.call_deferred(foe)
+		"wargoal", "wargoalclaim":
+			# The war goal window (doc 19): before committing, or with your claim under way
+			for rel in city.relations.values():
+				if rel.involves(me):
+					rel.claim = {}
+			var target = ""
+			for fid in city.factions:
+				if fid != me and city.shares_border(me, fid) and not city.is_at_war(me, fid):
+					target = fid
+					break
+			if target != "":
+				city.relation(me, target).truce_until_day = 0
+				city.factions[me].renown = maxf(city.factions[me].renown, 60.0)
+				city.factions[me].wealth = maxf(city.factions[me].wealth, 120.0)
+				event_queue.clear()
+				if name == "wargoalclaim":
+					city.justify(me, target, "claim", null)
+					city.day += 40
+				_open_wargoal.call_deferred(target)
 		"goals", "ultimatum":
 			# A neighbour's card with the war-goal buttons (doc 15), or an ultimatum from them waiting in Proposals
 			var them = ""

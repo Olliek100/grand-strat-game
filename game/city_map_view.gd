@@ -246,6 +246,10 @@ func _draw_overlay(canvas: CanvasItem):
 			wash = Color(wash.r, wash.g, wash.b, wash.a + 0.12).lightened(0.15)
 		if wash.a > 0.0:
 			canvas.draw_colored_polygon(d.polygon, wash)
+		# Occupied: tinted in the occupier's colour, and edged with a dashed line (doc 20)
+		if d.occupier != "" and city.factions.has(d.occupier):
+			var oc: Color = city.factions[d.occupier].color
+			canvas.draw_colored_polygon(d.polygon, Color(oc.r, oc.g, oc.b, 0.4))
 		if not show_heat and not city.can_reach(city.player_id, d):
 			canvas.draw_colored_polygon(d.polygon, Color(0, 0, 0, 0.3))
 	# Thin district lines everywhere; heavy borders where ownership changes
@@ -260,6 +264,11 @@ func _draw_overlay(canvas: CanvasItem):
 		var owner = d.owner_id()
 		if owner != "" and not show_heat and not _hidden(d):
 			canvas.draw_polyline(_closed(d.polygon), city.factions[owner].color.lightened(0.1), 2.5 / zoom)
+	for d in city.districts:
+		if d.occupier != "" and city.factions.has(d.occupier) and not _hidden(d):
+			var poly = _closed(d.polygon)
+			for k in poly.size() - 1:
+				canvas.draw_dashed_line(poly[k], poly[k + 1], city.factions[d.occupier].color.lightened(0.35), 4.0 / zoom, 10.0 / zoom)
 	for id in pick_labels:
 		canvas.draw_polyline(_closed(city.districts[id].polygon), Color(0.95, 0.78, 0.35), 3.5 / zoom)
 	if selected:

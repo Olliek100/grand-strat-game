@@ -152,7 +152,7 @@ func _think_war(city: CityMap):
 		for enemy_id in wars:
 			var r = city.relation(faction_id, enemy_id)
 			if city.check_enforce(faction_id, enemy_id) == "":
-				city.enforce_claim(faction_id, enemy_id)
+				city.enforce_claim(faction_id, enemy_id, city.auto_demands(faction_id, enemy_id))
 				continue
 			var mine: float = r.exhaustion[faction_id]
 			var war_days = city.day - r.war_start_day

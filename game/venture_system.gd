@@ -12,7 +12,7 @@ const ODDS_FACTORS = ["ruin_density", "claimant_present", "target_secured", "def
 	"emboldened", "strength_ratio", "your_arms"]
 # Operations a venture can list in "success_effects" / "failure_effects"
 const EFFECT_OPS = ["influence", "grievance", "gain", "steal", "development", "ruin", "population", "food_source", "scout", "scout_around", "hazard", "pay_owner",
-	"crew_loss", "crew_share_loss", "exhaustion", "opinion", "destroy_building", "spare", "embolden"]
+	"crew_loss", "crew_share_loss", "exhaustion", "opinion", "destroy_building", "spare", "embolden", "occupy"]
 # Outcome tiers, best to worst
 const TIERS = ["triumph", "success", "setback", "disaster"]
 
@@ -257,6 +257,8 @@ static func apply_effects(effects: Array, actor: Faction, target_id: String, d: 
 			"exhaustion":
 				if target:
 					city.add_exhaustion(actor.id, target_id, e["amount"])
+			"occupy":
+				values["occupy"] = true
 			"opinion":
 				if target:
 					city.change_opinion(target_id, actor.id, e["amount"], e.get("modifier", "raided"))

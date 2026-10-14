@@ -14,6 +14,9 @@ func _init():
 	_test_ai_diplomacy()
 	_test_mutual_peace()
 	_test_ask_cooldowns()
+	_test_war_goal_window()
+	_test_occupation_and_peace()
+	_test_death_risk()
 	_test_treaties()
 	_test_memories_and_deeds()
 	_test_leaders_and_tiers()
@@ -283,6 +286,168 @@ func _test_mutual_peace():
 		c3.offer_peace(a, c3.player_id)
 		c3.offer_peace(c3.player_id, a)
 	_check("the player is offered peace once per war", told.size() == 1, str(told.size()))
+
+# The war goal window's data (doc 19): wording, candidates, who would be called, outcomes, requirements, the alert
+func _test_war_goal_window():
+	var c = _new_city()
+	var me = c.player_id
+	_check("strength is worded in five steps", c.strength_step(0.3) == 0 and c.strength_step(0.6) == 1 and c.strength_step(1.0) == 2 and c.strength_step(1.5) == 3 and c.strength_step(3.0) == 4)
+	_border_with(c, me, "guild")
+	var candidates = c.claim_candidates(me, "guild")
+	_check("a bordering faction has districts to acquire", not candidates.is_empty() and candidates.all(func(d): return d.owner_id() == "guild" and c.borders_territory(me, d)))
+	var outcomes = c.goal_outcomes("guild", "claim", candidates[0])
+	_check("a claim says what you would gain and what losing costs", outcomes["win"].size() >= 2 and outcomes["lose"].size() >= 2 and candidates[0].district_name in outcomes["win"][1][1])
+	_check("subjugating and vassalizing have their own endings", c.goal_outcomes("guild", "subjugate", null)["win"].size() >= 2 and c.goal_outcomes("guild", "vassalize", null)["win"].size() >= 2)
+	c.factions[me].renown = 200.0
+	c.factions[me].wealth = 500.0
+	var reqs = c.justify_requirements(me, "guild", "claim", candidates[0])
+	_check("the requirements are ticks, warnings or crosses", reqs.size() >= 3 and reqs.all(func(q): return q[0] in ["ok", "warn", "no"]))
+	_check("with border, district and means, nothing is crossed", reqs.all(func(q): return q[0] != "no"), str(reqs))
+	c.factions[me].wealth = 0.0
+	_check("without the means, the cost is crossed and says what is missing", c.justify_requirements(me, "guild", "claim", candidates[0]).any(func(q): return q[0] == "no" and q[1].contains("wealth")))
+	c.factions[me].wealth = 500.0
+	# Opening it costs nothing: nothing is paid and no claim exists until you begin
+	var wealth_before = c.factions[me].wealth
+	c.goal_outcomes("guild", "claim", candidates[0])
+	c.justify_requirements(me, "guild", "claim", candidates[0])
+	_check("weighing a goal pays nothing and starts nothing", c.factions[me].wealth == wealth_before and c.relation(me, "guild").claim.is_empty())
+	# Once begun, the claim remembers where it started, and a turn for the worse is said once
+	c.justify(me, "guild", "claim", candidates[0])
+	var r = c.relation(me, "guild")
+	_check("the claim remembers the balance when you began", r.claim.has("start_ratio") and r.claim.has("start_their_strength") and r.claim.has("step"))
+	var told = []
+	c.event.connect(func(text, _kind): if text.contains("turned against your claim"): told.append(text))
+	r.claim["step"] = 0
+	c.factions["guild"].manpower = 500.0
+	c.factions["guild"].arms = 500.0
+	c._watch_own_claim(r)
+	var first = told.size()
+	c._watch_own_claim(r)
+	_check("a turn for the worse is said once, not every day", first == 1 and told.size() == 1, "%d then %d" % [first, told.size()])
+
+# Test helper: the holder occupies every district the owner has (a war won on the ground)
+func _occupy_all(c: CityMap, holder: String, owner: String):
+	for d in c.districts:
+		if d.owner_id() == owner:
+			d.occupier = holder
+
+# Occupation and the peace table (doc 20): an assault holds a district without owning it; ownership changes only at the table
+func _test_occupation_and_peace():
+	var c = _new_city()
+	var me = c.player_id
+	var foe = "guild"
+	_border_with(c, me, foe)
+	var d: District = c.claim_candidates(me, foe)[0]
+	c.start_war(me, foe)
+	var r = c.relation(me, foe)
+	var owner_before = d.owner_id()
+	c.occupy(d, me, 5)
+	_check("occupying doesn't change who owns the district", d.owner_id() == owner_before and d.occupier == me)
+	_check("its crew are the garrison", d.garrison == 5.0)
+	# An army advances from what it has taken: the districts beyond an occupied one are on your front
+	var beyond = d.neighbor_ids.map(func(n): return c.districts[n]).filter(func(x): return x.owner_id() == foe and x != d and not c.districts[x.id].neighbor_ids.any(func(m): return c.districts[m].owner_id() == me))
+	_check("land you occupy extends your front", beyond.is_empty() or beyond.all(func(x): return c.borders_territory(me, x)))
+	_check("and an enemy that occupies your land doesn't use it as its own", not c.holds(foe, d) and c.holds(me, d))
+	_check("an occupied district pays nobody", c.yield_multiplier(d) == 0.0 and not c.buildings_active(d))
+	var wealth_before = c.factions[foe].wealth
+	c._simulate_district(d)
+	_check("and nothing flows to its owner", c.factions[foe].wealth <= wealth_before + 0.001)
+	_check("nothing can be launched there but an assault", c.check_launch(me, "raid", d).contains("occupied"), c.check_launch(me, "raid", d))
+	_check("occupying is not scoring until a war goal gives it a score", c.war_score(r) == 0.0)
+	# A war goal gives the score: land held counts, the more the better
+	r.claim = {"by": me, "goal": "claim", "district": d.id, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0, "started": c.day}
+	var one = c.occupation_score(me, foe)
+	_check("occupation scores the share of their land held", one > 0.0 and one < GameData.rule("war_occupation_scale") + GameData.rule("war_home_bonus"), str(one))
+	for other in c.districts:
+		if other.owner_id() == foe:
+			other.occupier = me
+	_check("holding all of it scores the most, with the home bonus", c.occupation_score(me, foe) >= GameData.rule("war_occupation_scale"))
+	_check("the other side holds none of ours", c.occupation_score(foe, me) == 0.0)
+	var parts = c.war_score_parts(r)
+	_check("the score has its parts and a total in range", parts.has("occupation_for") and parts.has("battles") and parts["total"] <= 100.0 and parts["total"] >= -100.0)
+	# The owner retakes land by assault: the crew who did it hold it
+	c.liberate(d, foe, 4)
+	_check("retaking a district ends the occupation and the owner's crew garrison it", d.occupier == "" and d.garrison == 4.0 and d.owner_id() == owner_before)
+	d.occupier = me
+	# The peace table: score buys demands; ownership changes only now
+	r.war_points = 50.0
+	var demands = c.peace_demands(me, foe)
+	_check("the goal is the first demand, then occupied districts, then tribute", demands[0]["kind"] == "goal" and demands.any(func(x): return x["kind"] == "tribute"))
+	_check("a goal that needs more score than you have can't be enforced", c.check_enforce(me, foe) == "" or c.war_score(r) < demands[0]["cost"])
+	var owner_now = d.owner_id()
+	_check("until enforced, nothing has changed hands", owner_now == foe)
+	var extras = c.auto_demands(me, foe)
+	var err = c.enforce_claim(me, foe, extras)
+	_check("enforcing takes the goal and ends the war", err == "" and not r.at_war and r.claim.is_empty(), err)
+	_check("the claimed district changes hands only now", d.owner_id() == me and d.occupier == "")
+	_check("a war that ends in a deal brings the long truce", r.truce_until_day >= c.day + int(GameData.rule("truce_war_days")) - 1)
+	_check("no occupation outlives the war", c.districts.all(func(x): return x.occupier == "" or c.is_at_war(x.owner_id(), x.occupier)))
+	# White peace is the status quo
+	var c2 = _new_city()
+	var me2 = c2.player_id
+	var e2 = "guild"
+	_border_with(c2, me2, e2)
+	var t2: District = c2.claim_candidates(me2, e2)[0]
+	c2.start_war(me2, e2)
+	var r2 = c2.relation(me2, e2)
+	r2.war_start_day = c2.day - 200
+	c2.factions[me2].renown = 100.0
+	r2.claim = {"by": me2, "goal": "claim", "district": t2.id, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0, "started": c2.day}
+	var owner2 = t2.owner_id()
+	c2.occupy(t2, me2, 4)
+	var crew_before = c2.factions[me2].manpower
+	r2.peace_offered_by = e2
+	var renown_before = c2.factions[me2].renown
+	_check("white peace is allowed once they offer it", c2.make_peace(me2, e2) == "")
+	_check("a white peace leaves the district with its owner", t2.owner_id() == owner2 and t2.occupier == "")
+	_check("the occupiers' crew go home", c2.factions[me2].manpower >= crew_before + 4.0 - 0.001)
+	_check("pressing a claim and backing off costs the one who pressed it", c2.factions[me2].renown < renown_before)
+	_check("they remember it", c2.relation(e2, me2).modifiers[e2].any(func(m): return m["id"] == "backed_off"))
+	_check("and a truce follows", r2.truce_until_day >= c2.day + int(GameData.rule("truce_days")) - 1)
+	# Backing down before any war: the same cost and a truce
+	var c3 = _new_city()
+	var me3 = c3.player_id
+	_border_with(c3, me3, "guild")
+	c3.factions[me3].renown = 100.0
+	c3.factions[me3].wealth = 500.0
+	c3.relation(me3, "guild").truce_until_day = 0
+	c3.justify(me3, "guild", "claim", null)
+	var renown3 = c3.factions[me3].renown
+	_check("backing down is allowed", c3.withdraw_claim(me3, "guild") == "")
+	_check("it costs renown and gives a truce", c3.factions[me3].renown < renown3 and c3.relation(me3, "guild").truce_until_day > c3.day)
+	# A saved game keeps who holds what
+	var c4 = _new_city()
+	var me4 = c4.player_id
+	_border_with(c4, me4, "guild")
+	var d4: District = c4.claim_candidates(me4, "guild")[0]
+	c4.start_war(me4, "guild")
+	c4.occupy(d4, me4, 3)
+	var path = "user://occupation_test.sav"
+	c4.save_game(path)
+	var loaded = CityMap.load_game(path)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_check("occupation survives a save", loaded != null and loaded.districts[d4.id].occupier == me4 and loaded.districts[d4.id].garrison == 3.0)
+
+# Death risk (doc 14): age alone decides the baseline; a failed venture can kill its leader, by danger and by how long the odds were
+func _test_death_risk():
+	var c = _new_city()
+	var leader = c.leader_of(c.player_id)
+	leader.age = 24
+	_check("a young leader's yearly risk follows age, not office", c.yearly_death_chance(leader) < 0.05, str(c.yearly_death_chance(leader)))
+	var other = c.characters_of(c.player_id).filter(func(x): return not x.is_leader and x.is_adult())
+	if not other.is_empty():
+		other[0].age = 24
+		_check("a leader is no likelier to die of illness than anyone else", is_equal_approx(c.monthly_death_chance(leader), c.monthly_death_chance(other[0])))
+	leader.age = 70
+	_check("old age still brings the risk", c.yearly_death_chance(leader) > 0.3, str(c.yearly_death_chance(leader)))
+	var assault = GameData.venture("assault")
+	var scavenge = GameData.venture("scavenge")
+	_check("nothing happens to the leader on a success", c.venture_death_chance(assault, "success", 0.5) == 0.0 and c.venture_death_chance(assault, "triumph", 0.5) == 0.0)
+	_check("a disaster is deadlier than a setback", c.venture_death_chance(assault, "disaster", 0.5) > c.venture_death_chance(assault, "setback", 0.5) and c.venture_death_chance(assault, "setback", 0.5) > 0.0)
+	_check("longer odds are deadlier", c.venture_death_chance(assault, "disaster", 0.2) > c.venture_death_chance(assault, "disaster", 0.8))
+	_check("a more dangerous venture is deadlier", c.venture_death_chance(assault, "disaster", 0.5) > c.venture_death_chance(scavenge, "disaster", 0.5))
+	_check("a standing task on home ground is safer", c.venture_death_chance(assault, "disaster", 0.5, true) < c.venture_death_chance(assault, "disaster", 0.5, false))
+	_check("the chance is capped", c.venture_death_chance({"danger": 5.0}, "disaster", 0.0) <= GameData.rule("death_chance_cap"))
 
 # Asks: a cooldown per pair and action, longer after each refusal, lighter for the player, and renewals aren't asks (doc 18)
 func _test_ask_cooldowns():
@@ -1284,7 +1449,7 @@ func _test_war_goals():
 	var r4 = c4.relation(me4, dogs)
 	r4.claim = {"by": me4, "goal": "subjugate", "district": -1, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0}
 	c4.start_war(me4, dogs)
-	r4.war_points = 100.0
+	_occupy_all(c4, me4, dogs)
 	c4.enforce_claim(me4, dogs)
 	_check("subjugated: they're your tributary and keep their land", r4.overlord == me4 and c4.districts_held(dogs) > 0)
 	_check("a tributary makes no diplomacy but trade", Diplomacy.check_action(c4, "pact", dogs, "guild").begins_with("Tributaries"))
@@ -1297,7 +1462,7 @@ func _test_war_goals():
 	var r5 = c5.relation(me5, dogs)
 	r5.claim = {"by": me5, "goal": "vassalize", "district": -1, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0}
 	c5.start_war(me5, dogs)
-	r5.war_points = 100.0
+	_occupy_all(c5, me5, dogs)
 	c5.enforce_claim(me5, dogs)
 	_check("vassalized: their faction is gone, their land and ruler are yours", not c5.factions.has(dogs) and their_leader.faction_id == me5 and not their_leader.is_leader)
 	# Playtest: a weak faction raided by a strong one must have recourse; nothing but a shared border stops a claim
@@ -1370,7 +1535,7 @@ func _test_war_goals():
 	var r11 = c11.relation(me11, dogs)
 	r11.claim = {"by": dogs, "goal": "vassalize", "district": -1, "reason": "", "stage": "war", "ready_day": 0, "deadline": 0}
 	c11.start_war(dogs, me11)
-	r11.war_points = 100.0
+	_occupy_all(c11, dogs, me11)
 	c11.enforce_claim(dogs, me11)
 	_check("the player is never absorbed: they become a tributary", c11.factions.has(me11) and r11.overlord == dogs)
 	# A white peace ends the claim; a claim survives a save

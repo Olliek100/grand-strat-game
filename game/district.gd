@@ -24,6 +24,9 @@ var restored_by: String = ""
 var garrison: float = 0.0
 # The house that holds this district inside its owner's faction (doc 16, H2), or -1
 var house_id: int = -1
+# A faction at war with the owner holds it (doc 20): it pays nobody, the garrison is the occupier's crew
+var occupier: String = ""
+var occupied_day: int = 0
 
 # Map shape
 var polygon: PackedVector2Array
@@ -111,7 +114,7 @@ func to_dict() -> Dictionary:
 	return {
 		"influence": influence.duplicate(), "population": population, "grievance": grievance,
 		"ruin_level": ruin_level, "development": development, "unrest_warned": unrest_warned,
-		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard, "raid_safe_until": raid_safe_until, "restored_by": restored_by, "garrison": garrison, "house_id": house_id,
+		"buildings": buildings.duplicate(), "food_yield": food_yield, "hazard": hazard, "raid_safe_until": raid_safe_until, "restored_by": restored_by, "garrison": garrison, "house_id": house_id, "occupier": occupier, "occupied_day": occupied_day,
 	}
 
 func load_dict(data: Dictionary):
@@ -128,3 +131,5 @@ func load_dict(data: Dictionary):
 	restored_by = data["restored_by"]
 	garrison = data["garrison"]
 	house_id = int(data["house_id"])
+	occupier = data["occupier"]
+	occupied_day = int(data["occupied_day"])

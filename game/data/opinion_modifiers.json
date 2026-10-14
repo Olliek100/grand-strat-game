@@ -16,5 +16,6 @@
 	"claimed_us": {"label": "Laid a claim against us", "decay": 0.03, "limit": 30},
 	"warmonger": {"label": "Lays claims on its neighbours", "decay": 0.03, "limit": 30},
 	"oathbreaker": {"label": "Broke a treaty or truce to press a claim", "decay": 0.02, "limit": 40},
-	"pestered": {"label": "Keeps asking after being turned down", "decay": 0.03, "limit": 20}
+	"pestered": {"label": "Keeps asking after being turned down", "decay": 0.03, "limit": 20},
+	"backed_off": {"label": "Pressed a claim and backed off", "decay": 0.03, "limit": 20}
 }

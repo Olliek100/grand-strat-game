@@ -55,6 +55,10 @@ class TempoLog:
 	var sources_today := {}
 	var revolts_today := {}
 	var revolts := 0
+	var occupations := 0
+	var liberations := 0
+	var war_ends := {}
+	var war_end_days := {}
 	var owners := {}
 	var flips := {"force": 0, "revolt": 0, "other": 0}
 	var to_nobody := 0
@@ -87,6 +91,16 @@ class TempoLog:
 	func revolt(district_id: int):
 		revolts += 1
 		revolts_today[district_id] = true
+
+	func occupied(_district_id: int, _by_id: String):
+		occupations += 1
+
+	func liberated(_district_id: int, _by_id: String):
+		liberations += 1
+
+	func war_end(how: String, days: int):
+		war_ends[how] = war_ends.get(how, 0) + 1
+		war_end_days[how] = war_end_days.get(how, 0) + days
 
 	func start():
 		for d in city.districts:
@@ -166,11 +180,21 @@ class StopLog:
 	func grievance(_district_id: int, source: String, amount: float):
 		tempo.grievance(source, amount)
 
-	func flip(district_id: int, _before: String, _after: String, actor_id: String):
-		tempo.flip(district_id, actor_id)
+	func flip(district_id: int, before: String, _after: String, actor_id: String):
+		# Settling unowned land is not conquest
+		tempo.flip(district_id, actor_id if before != "" else "")
 
 	func day_end():
 		pass
+
+	func occupied(district_id: int, by_id: String):
+		tempo.occupied(district_id, by_id)
+
+	func liberated(district_id: int, by_id: String):
+		tempo.liberated(district_id, by_id)
+
+	func war_end(how: String, days: int):
+		tempo.war_end(how, days)
 
 	func revolt(district_id: int):
 		tempo.revolt(district_id)
@@ -212,7 +236,7 @@ const ALERT_CAUSES = [
 	["demand tribute", "tribute_demanded"], ["offer tribute", "tribute_offered"], ["Answer in Diplomacy", "proposal_posted"],
 	["You declared war", "own_war_declared"], ["WAR!", "war_on_you"], ["offer peace", "peace_offered"], ["would accept peace", "peace_possible"],
 	["Peace with", "own_peace_made"], ["justifying a claim on you", "claim_on_you"], ["You're justifying", "own_claim_started"],
-	["to press a claim", "treaty_broken"], ["ultimatum", "ultimatum"], ["lapses in", "treaty_lapsing"], ["has lapsed", "treaty_lapsed"],
+	["to press a claim", "treaty_broken"], ["turned against your claim", "own_claim_turned"], ["side now outweighs yours", "claim_early_possible"], ["ultimatum", "ultimatum"], ["lapses in", "treaty_lapsing"], ["has lapsed", "treaty_lapsed"],
 	["couldn't absorb you", "made_tributary"], ["have absorbed", "absorbed"], ["last district", "last_district"],
 	["seat is empty", "seat_empty"], ["moves from", "seat_moved"], ["is restless", "restless"], ["deserted", "deserted"],
 	["buy off rival", "bribe_rivals"], ["PURGE", "purge"], ["CIVIL WAR", "civil_war"], ["Civil war in", "civil_war"], ["broke away", "house_revolt"],
@@ -296,6 +320,20 @@ func _print_tempo(logs: Array, runs: int, years: int):
 		avg.call(at_taking), avg.call(after[30]), avg.call(after[90]), avg.call(after[180]), at_taking.size(), after[30].size(), after[90].size(), after[180].size(),
 		sums["owned"] / maxi(sums["samples"], 1), roundi(100.0 * sums["o65"] / maxi(sums["samples"], 1)), roundi(100.0 * sums["o80"] / maxi(sums["samples"], 1))])
 	print("TEMPO revolts %.1f a game year" % (sums["revolts"] / per_year))
+	var occ = 0
+	var lib = 0
+	var ends = {}
+	var end_days = {}
+	for s in logs:
+		occ += s.tempo.occupations
+		lib += s.tempo.liberations
+		for k in s.tempo.war_ends:
+			ends[k] = ends.get(k, 0) + s.tempo.war_ends[k]
+			end_days[k] = end_days.get(k, 0) + s.tempo.war_end_days[k]
+	var end_parts = []
+	for k in ends:
+		end_parts.append("%s %.1f a game (avg %d days)" % [k, float(ends[k]) / runs, end_days[k] / maxi(ends[k], 1)])
+	print("TEMPO occupations %.1f a game year, retaken by the owner %.1f | wars ended: %s" % [occ / per_year, lib / per_year, ", ".join(end_parts)])
 	for pair in [["added", added], ["removed", removed]]:
 		var list = []
 		for k in pair[1]:
