@@ -8,7 +8,7 @@ What changed in each build: `../CHANGELOG.md`. Design: `../Steering/` (start wit
 
 ## Play
 1. Open Godot 4.7, **Import**, and select `game/project.godot`. Press **F5**.
-2. **Space** pauses, **1-5** set the speed, **Esc** closes what's open or opens the menu (save, load, settings).
+2. **Space** pauses, **1-5** set the speed (a game year takes about 6 minutes at 1 and 29 seconds at 5), **Esc** closes what's open or opens the menu (save, load, settings).
 3. **F1-F7** open the windows: Character, Council, Realm, Diplomacy, Ambitions, Economy, Log.
 
 ## How it plays
@@ -25,7 +25,7 @@ until it's done. Launch the rest yourself: scouting, settling, trade and every a
 
 **Your people:** every few months something happens to your family or crew (a birth, a death, a coming of age, a quarrel) and you choose how to answer. Choices cost nothing; each gives a buff or a debuff for a while (see the outliner's Effects). Married couples have children, and districts you fully clear, secure and rebuild pay you back (Cleared, Safe, Rebuilt, Restored).
 
-**Choose a direction:** spend renown (from deeds and triumphs) on National Ambitions (F5); reform your government in
+**Choose a direction:** spend renown (from deeds and triumphs) on National Ambitions (F5), and take Decisions (the second tab of F5: instant choices that cost wealth); reform your government in
 the Realm window. Each government passes power on, and breaks, in its own way.
 
 **The loop:** food grows people and manpower; people pay taxes and eat food; materials (from ruins, trade and
@@ -81,6 +81,7 @@ Claude Code commands wrap these: `/test`, `/sim`, `/render`, `/design-check`, `/
 | `data/war_goals.json` | War goals: cost, time to justify, war-score price, how readily each is accepted |
 | `data/map.json`, `district_types.json` | The generated city layout; district type stats and art |
 | `data/deeds.json`, `national_ambitions.json` | Deeds (milestones that pay renown); National Ambitions |
+| `data/decisions.json` | Decisions: instant choices (desperation, running things, institutions) |
 | `data/governments.json`, `names.json` | Governments, their succession rules and reforms; name pools |
 | `data/events.json` | Choice events: when they come, their options and timed effects |
 

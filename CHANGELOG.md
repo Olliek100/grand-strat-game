@@ -2,6 +2,45 @@
 
 What each build changed, its tuning numbers and simulation results, newest first. Design decisions that still stand are in Steering/04-decision-log.md. From v1.38 on, each build is a git tag.
 
+**2026-10-18 (v1.44, defender's victory, Decisions, strain)**
+
+Saves from before this build won't load (save version 21). Details are in the three entries below this one.
+- **A defender who held out can dictate terms** at the peace table (war score 65 in their favour): the claim fails, reparations, and occupied districts or tribute for spare score. The AI does the same.
+- **A Decisions tab in Ambitions (F5):** eight instant decisions (desperation, running things, institutions), paid at once, locked ones say what is missing.
+- **Strain:** going over your reach strains only your newest land; the Land chip shows it; a new decision, Open the city's tables, calms every district. Top speed is slower (a year takes about 29 seconds).
+- **Checks:** regression tests and UI smoke test pass. Sim (6 games of 6 years, seed 100, final settings): wars ended per game white peace 15.0, attacker won 1.5, defender held out 0.8; overreach grievance 657 a game year (7,127 before); revolts 1.5 a year; unclaimed districts about 17 after year 2 and 3 after year 3.
+- **Open:** pacing target still not met (the map fills by year 3); the war-start count and the largest faction swing a lot between runs and are not explained; strain is a weak brake on going wide as chosen. Next: building tiers (doc 22 part B).
+
+**2026-10-16 (strain made visible, doc 22 part A)**
+
+No save change.
+- **Strain falls on your newest land only.** Past your reach, each district still settling in (the first months after you take or settle it) gains grievance every day; older land does not. The rate is 0.3 a day for each district over, capped at 1.5 (was 0.1 and 0.6, on every district).
+- **One place to see it:** the Land chip in the top bar reads "Land 12/10 strained" and its hover lists how many you are over, how many districts carry it, and the ways out.
+- **New decision, Open the city's tables:** only when you hold more than your reach; 10 wealth plus 3 for each district held; every district you hold gets 10 less grievance; about a year's cooldown. Decisions can now cost a share per district (`cost_per_district`).
+- **Measured (6 games of 6 years, seed 100, per game year):** overreach grievance 7,127 before, 227 at the old rate on new land only, 657 at the kept rate; relief removed 3,040, 294, 604; average grievance on owned land 20, 5, 5; revolts 2.3, 0.6, 1.5. Unclaimed districts: year 2 about 14, 14, 17; year 3 about 2, 1.8, 3.3 (pacing not changed). **The brake on going wide is much weaker**, as chosen: the largest faction ended at 55 before and 88 now, but that figure swings a lot between runs (38-88 in earlier builds), so it isn't attributable to this change. The real brakes on a big faction are now infamy and war. If a playtest shows wide play has no cost, the rate is the lever.
+- **Tests:** the old "every district grumbles" test now checks that new land does and settled land does not; new tests for the tables and the cost.
+
+**2026-10-16 (top speed slowed)**
+
+- **Speed 5 is 0.08 seconds a day (was 0.04):** a game year takes about 29 seconds (was 14). Speeds 1-4 are unchanged (360, 180, 90 and 36 seconds a year). Owner's playtest after a CK2 session. The simulation now has 80 ms a day at speed 5 instead of 40.
+
+**2026-10-16 (Decisions, doc 21)**
+
+Saves from before this build won't load (save version 21; the owner agreed).
+- **A Decisions tab in the Ambitions window (F5).** Eight instant choices, paid at once, in three groups: **Desperation** (ration the stores, press volunteers, strip a building for parts; each opens only in trouble: food short, a raid or war in the last 60 days, out of materials), **Running things** (market day, pay the watch, a feast for the district; wealth for a timed gain or a one-off calm, with a cooldown), and **Institutions** (a records office: +1 reach for good; a court: calmer districts and a smaller split chance at a succession; once only). Every locked card shows what is missing, ticked, and the cost sits on the button.
+- **No new verb:** a Decision has no crew, odds or days to land, so it is not a venture; it changes how you run things, like building or an ambition. Effects reuse the timed effects of events and the requirements of ambitions; the new data is `data/decisions.json`, checked by `GameData.validate()`.
+- **The AI takes them from the same list**, scored like ambitions, and only when it could pay twice the cost.
+- **Measured (6 games of 6 years, seed 100):** the AI takes 10-23 decisions a game. Wars started 113, ended 103: white peace 14.8 a game, attacker won 1.7, defender held out 0.7. Largest faction 42-55 in the later games, broke days 342, starving days 192. No script errors.
+- **Not yet:** the council asking for policies, Focuses, Activities, a warning before a stock runs out, and more Decisions (doc 21).
+
+**2026-10-14 (a defender's victory at the peace table)**
+
+No save change (nothing new is saved).
+- **A defender who holds out can dictate terms.** When the war score is 65 in the defender's favour (`held_price`), the war window shows "You held out: your terms". Their claim fails and the claimant pays reparations (up to 40 wealth, as before); spare score buys districts the defender occupies (same prices as the claimant's) or 60 wealth more tribute. "Dictate terms" ends the war with the ten-year truce. Taking land earns the defender infamy, as it does for the claimant. Below 65 the window says what is missing. Wearing the attacker out to 100 still ends the war as before.
+- **The AI uses it** by the same rule, taking the cheapest extras its score buys.
+- **Measured (6 games of 6 years, seed 100, before against now):** wars ended per game: white peace 16.3 against 10.2, attacker won 2.3 against 1.5, defender held out 0 against 1.2 (after 62 days on average). At a threshold of 50 the defender "won" after 36 days on average, which was too early, so it is 65. Attackers still win about 1.5 wars a game. **Not explained:** wars started fell from 119 to 80 a game-set, and the largest faction varied 19-55 across games (38 before; 80 in one game at threshold 50). The cause is not isolated; worth a 30-game run before the next war change.
+- **Tests:** the regression tests and the UI smoke test pass; neither covers the defender's terms yet.
+
 **2026-10-14 (W2 and W3 of doc 20: the cost of growth, and a bigger map)**
 
 Saves from before this build won't load (save version 20).

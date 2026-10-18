@@ -32,6 +32,7 @@ func _init():
 	_test_raid_cooldown()
 	_test_raiders_and_deterrence()
 	_test_ambitions()
+	_test_decisions()
 	_test_government()
 	_test_tasks()
 	_test_district_payoffs()
@@ -500,10 +501,14 @@ func _test_cost_of_growth():
 	c.held_cache = {me: int(reach) + 5}
 	c.reach_cache = {}
 	var g = home.grievance
-	home.absorb = 1.0
+	home.absorb = 0.5
 	home.garrison = 0.0
 	c._simulate_district(home)
-	_check("past your reach, the realm grumbles", home.grievance > g - 0.15 + 0.05, "%.2f -> %.2f" % [g, home.grievance])
+	_check("past your reach, the newest land grumbles", home.grievance > g - 0.15 + 0.05, "%.2f -> %.2f" % [g, home.grievance])
+	home.absorb = 1.0
+	home.grievance = g
+	c._simulate_district(home)
+	_check("past your reach, settled land does not", home.grievance <= g - 0.15 + 0.001, "%.2f -> %.2f" % [g, home.grievance])
 	# Saving keeps all of it
 	var path = "user://growth_test.sav"
 	home.absorb = 0.4
@@ -970,6 +975,88 @@ func _test_raiders_and_deterrence():
 		fresh.advance_day()
 		offers += fresh.proposals.filter(func(x): return x["action"] == "pact" and not fresh.shares_border(x["from"], fresh.player_id)).size()
 	_check("no pact offers from factions that don't border you", offers == 0, str(offers))
+
+# Decisions (doc 21): instant, paid on the spot, gated with reasons, repeatable after a cooldown or once only
+func _test_decisions():
+	var c = CityMap.new()
+	var me = c.player_id
+	var p: Faction = c.factions[me]
+	_check("every decision in the data is valid", GameData.validate().filter(func(s): return s.begins_with("Decision")).is_empty())
+	p.wealth = 0.0
+	_check("a decision you can't pay for says what's missing", c.check_decision(me, "pay_the_watch").contains("wealth") or c.check_decision(me, "pay_the_watch").begins_with("Needs"))
+	# Market day needs three districts: it names what's missing
+	var held = c.districts.filter(func(d): return d.owner_id() == me).size()
+	if held < 3:
+		_check("a locked decision names the gap", c.check_decision(me, "market_day").begins_with("Needs"), c.check_decision(me, "market_day"))
+	for d in c.districts.slice(0, 6):
+		d.influence.clear()
+		d.add_influence(me, 80.0)
+	p.wealth = 100.0
+	var effects_before = p.effect("trade_income_mult")
+	_check("market day can be taken", c.take_decision(me, "market_day") == "")
+	_check("it costs wealth at once", is_equal_approx(p.wealth, 60.0), str(p.wealth))
+	_check("and lifts trade income", p.effect("trade_income_mult") > effects_before)
+	_check("it can't be taken again until its cooldown ends", c.check_decision(me, "market_day").begins_with("Ready again"))
+	c.day += 361
+	_check("it is ready again after the cooldown", c.check_decision(me, "market_day") == "")
+	# A once-only institution: lasting, then closed
+	p.wealth = 300.0
+	for d in c.districts.slice(0, 6):
+		d.buildings.append("market")
+	c.characters_of(me)[0].skills["stewardship"] = 4
+	var reach_before = c.reach(me)
+	var leader = c.leader_of(me)
+	leader.skills["stewardship"] = 4
+	_check("a records office can be opened", c.take_decision(me, "records_office") == "", c.check_decision(me, "records_office"))
+	c.reach_cache.clear()
+	_check("it adds one to your reach for good", is_equal_approx(c.reach(me), reach_before + 1.0), "%s -> %s" % [reach_before, c.reach(me)])
+	_check("and only once", c.check_decision(me, "records_office") == "Already done")
+	# Desperation: strip a building, only when out of materials
+	p.materials = 50.0
+	_check("stripping a building is closed while you have materials", c.check_decision(me, "strip_a_building").begins_with("Needs"))
+	p.materials = 0.0
+	var buildings_before = 0
+	for d in c.districts:
+		if d.owner_id() == me:
+			buildings_before += d.buildings.size()
+	_check("stripping a building works when you're out", c.take_decision(me, "strip_a_building") == "")
+	var buildings_after = 0
+	for d in c.districts:
+		if d.owner_id() == me:
+			buildings_after += d.buildings.size()
+	_check("it costs a building and returns materials", buildings_after == buildings_before - 1 and p.materials > 0.0, "%d -> %d, %s" % [buildings_before, buildings_after, p.materials])
+	# Strain (doc 22): past your reach, the newest land bears it, and one decision calms the realm
+	var s = CityMap.new()
+	var sp: Faction = s.factions[s.player_id]
+	for d in s.districts.slice(0, 14):
+		d.influence.clear()
+		d.add_influence(s.player_id, 80.0)
+		d.absorb = 1.0
+	s.districts[13].absorb = 0.3
+	s.held_cache.clear()
+	s.reach_cache.clear()
+	for d in s.districts:
+		if d.owner_id() != "":
+			s.held_cache[d.owner_id()] = s.held_cache.get(d.owner_id(), 0) + 1
+	_check("holding far more than your reach strains you", s.strain_daily(s.player_id) > 0.0, "%s over %s" % [s.districts_held(s.player_id), s.reach(s.player_id)])
+	_check("only land still settling carries the strain", s.strained_districts(s.player_id).size() == 1 and s.strained_districts(s.player_id)[0].id == s.districts[13].id)
+	var old_before = s.districts[0].grievance
+	var new_before = s.districts[13].grievance
+	s._simulate_district(s.districts[0])
+	s._simulate_district(s.districts[13])
+	_check("older land gains nothing from the strain, the newest does", s.districts[0].grievance <= old_before and s.districts[13].grievance > new_before)
+	sp.wealth = 500.0
+	_check("the city's tables open only when strained", s.check_decision(s.player_id, "open_the_tables") == "")
+	var cost = s.decision_cost(s.player_id, "open_the_tables")["wealth"]
+	_check("its cost grows with the land you hold", cost > 10.0 + 3.0 * 10, str(cost))
+	s.districts[0].grievance = 50.0
+	s.take_decision(s.player_id, "open_the_tables")
+	_check("it calms every district you hold", s.districts[0].grievance < 41.0, str(s.districts[0].grievance))
+	var calm = CityMap.new()
+	_check("with land within reach the tables are closed", calm.check_decision(calm.player_id, "open_the_tables").begins_with("Needs"))
+	# Saved
+	var saved = Faction.from_dict(p.to_dict())
+	_check("decisions survive a save", "records_office" in saved.decisions_done and saved.decision_ready.has("market_day") and saved.decision_ready.has("strip_a_building"))
 
 # National Ambitions: gated by situation, paid in renown, closing rivals, lasting once done
 func _test_ambitions():

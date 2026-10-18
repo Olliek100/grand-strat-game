@@ -56,6 +56,12 @@ static func national_ambitions() -> Dictionary:
 static func national_ambition(id: String) -> Dictionary:
 	return national_ambitions()[id]
 
+static func decisions() -> Dictionary:
+	return _load("decisions")
+
+static func decision(id: String) -> Dictionary:
+	return decisions()[id]
+
 static func events() -> Dictionary:
 	return _load("events")
 
@@ -202,6 +208,30 @@ static func validate() -> Array:
 				problems.append("National ambition '%s' closes unknown ambition '%s'" % [id, other])
 		if amb.get("ai_goal") not in FactionAI.GOALS:
 			problems.append("National ambition '%s' has unknown ai_goal '%s'" % [id, amb.get("ai_goal")])
+	for id in decisions():
+		var dec: Dictionary = decisions()[id]
+		for key in ["label", "kind", "description", "requires", "cost", "result", "ai_goal", "ai_value"]:
+			if not dec.has(key):
+				problems.append("Decision '%s' is missing '%s'" % [id, key])
+		if not dec.has("cooldown") and not dec.get("once", false):
+			problems.append("Decision '%s' needs a 'cooldown' or to be 'once'" % id)
+		for option in dec.get("requires", []):
+			for condition in option:
+				if condition.get("type") not in CityMap.AMBITION_CONDITIONS:
+					problems.append("Decision '%s' has unknown requirement '%s'" % [id, condition.get("type")])
+		for name in dec.get("timed", {}).get("effects", {}):
+			if name not in CityMap.EVENT_EFFECTS:
+				problems.append("Decision '%s' has unknown effect '%s'" % [id, name])
+		if dec.has("timed") and not dec["timed"].has("days"):
+			problems.append("Decision '%s' has timed effects but no 'days'" % id)
+		for name in dec.get("permanent", {}).get("effects", {}):
+			if name not in CityMap.EVENT_EFFECTS:
+				problems.append("Decision '%s' has unknown effect '%s'" % [id, name])
+		for name in dec.get("instant", {}):
+			if name not in CityMap.DECISION_INSTANT:
+				problems.append("Decision '%s' has unknown instant effect '%s'" % [id, name])
+		if dec.get("ai_goal") not in FactionAI.GOALS:
+			problems.append("Decision '%s' has unknown ai_goal '%s'" % [id, dec.get("ai_goal")])
 	for id in events():
 		var ev: Dictionary = events()[id]
 		if ev.get("moment") not in CityMap.EVENT_MOMENTS:

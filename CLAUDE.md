@@ -33,7 +33,7 @@ docs in `Steering/`. The owner judges builds by playing them: show consequences,
 - All simulation randomness goes through `city.rng`, so a saved game replays identically. No global
   `randf()`/`randi()`/`shuffle()` in simulation code (portraits and map art seed their own generators; that's fine).
 - Changing what's saved: update `to_dict`/`from_dict` and bump `CityMap.SAVE_VERSION`.
-- Only the open window refreshes; keep the daily simulation under ~30 ms/day (speed 5 allows 40).
+- Only the open window refreshes; keep the daily simulation under ~30 ms/day (speed 5 allows 80).
 - Match the surrounding style: short comments that say why, plain names.
 
 ## Checks (from `game/`, `$GODOT` is set in `.claude/settings.json`)

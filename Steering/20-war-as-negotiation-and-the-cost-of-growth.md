@@ -69,7 +69,10 @@ Each is a build you can play before the next.
 - The loser can always concede; the winner's demands need no consent once the score allows them (as in CK3). White peace needs the other side to accept.
 
 ## Built: W1 (2026-10-11)
-Occupation, war score, the peace table, a status-quo white peace, the cost and truce for backing off, and the ten-year truce are built as described (see the changelog). Not yet built: a defender's victory demands, parts B and C (W2, W3). Measured side effect: factions go hungrier and poorer at war, since occupied districts pay nobody; not retuned.
+Occupation, war score, the peace table, a status-quo white peace, the cost and truce for backing off, and the ten-year truce are built as described (see the changelog). Parts B and C were built later (W2, W3); the defender's victory is built too (see the next section). Measured side effect: factions go hungrier and poorer at war, since occupied districts pay nobody; not retuned.
 
 ## Built: W2 and W3 (2026-10-14)
 The map is 117 districts with 12 factions; settling-in, infamy and reach are built as above (see the changelog). **The pacing target is not met**: the map still fills by year 3. The first year claims about 57 of 117 districts whatever the Settle cost, so the next lever is the early game itself (what limits each faction's first dozen districts), or a bigger map. The speed goal (30 ms a day) is also unmet.
+
+## Built: a defender's victory (2026-10-14)
+A defender whose war score reaches 65 can dictate terms: the claim fails, the claimant pays reparations, and spare score buys districts the defender occupies, or tribute. The AI does the same. See the changelog and the decision log.

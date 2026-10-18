@@ -43,6 +43,9 @@ var ambition: String = ""
 var ambition_days_left: int = 0
 var ambitions_done: Array = []
 var ambitions_closed: Array = []
+# Decisions (data/decisions.json): once-only ones taken (their effects last for good), and the day each repeatable one is ready again
+var decisions_done: Array = []
+var decision_ready: Dictionary = {}
 # effect() answers for the current day: asked for every district several times a day. Cleared each morning
 # (and when an ambition completes); not saved
 var effect_cache: Dictionary = {}
@@ -114,6 +117,10 @@ func effect(effect_name: String) -> float:
 		var value = GameData.national_ambition(id)["bonus"].get("effects", {}).get(effect_name)
 		if value != null:
 			total = total * value if multiplicative else total + value
+	for id in decisions_done:
+		var decided = GameData.decision(id).get("permanent", {}).get("effects", {}).get(effect_name)
+		if decided != null:
+			total = total * decided if multiplicative else total + decided
 	for timed in timed_effects:
 		var value = timed.get("effects", {}).get(effect_name)
 		if value != null:
@@ -131,6 +138,10 @@ func effects_with_labels(effect_name: String) -> Array:
 		var def = GameData.national_ambition(id)
 		if def["bonus"].get("effects", {}).has(effect_name):
 			found.append([def["label"], def["bonus"]["effects"][effect_name]])
+	for id in decisions_done:
+		var decision = GameData.decision(id)
+		if decision.get("permanent", {}).get("effects", {}).has(effect_name):
+			found.append([decision["label"], decision["permanent"]["effects"][effect_name]])
 	for timed in timed_effects:
 		if timed.get("effects", {}).has(effect_name):
 			found.append([timed["label"], timed["effects"][effect_name]])
@@ -178,7 +189,7 @@ func pay(costs: Dictionary):
 func to_dict() -> Dictionary:
 	return {
 		"id": id, "name": display_name, "color": color.to_html(false), "player": is_player,
-		"manpower": manpower, "supplies": supplies, "materials": materials, "arms": arms, "wealth": wealth, "starving": starving, "broke": broke, "home_id": home_id, "renown": renown, "infamy": infamy, "reputation": reputation, "deeds_done": deeds_done.duplicate(), "ambition": ambition, "ambition_days_left": ambition_days_left, "ambitions_done": ambitions_done.duplicate(), "ambitions_closed": ambitions_closed.duplicate(), "government": government, "reform_locked_until": reform_locked_until, "caretaker_until": caretaker_until, "last_succession_day": last_succession_day, "timed_effects": timed_effects.duplicate(true), "next_event_day": next_event_day, "event_last": event_last.duplicate(), "stats": stats.duplicate(), "scouted": scouted.duplicate(), "disrepair": disrepair, "minor": minor, "blurb": blurb, "designated_heir": designated_heir, "lean": lean.duplicate(), "bought": bought.duplicate(),
+		"manpower": manpower, "supplies": supplies, "materials": materials, "arms": arms, "wealth": wealth, "starving": starving, "broke": broke, "home_id": home_id, "renown": renown, "infamy": infamy, "reputation": reputation, "deeds_done": deeds_done.duplicate(), "ambition": ambition, "ambition_days_left": ambition_days_left, "ambitions_done": ambitions_done.duplicate(), "ambitions_closed": ambitions_closed.duplicate(), "decisions_done": decisions_done.duplicate(), "decision_ready": decision_ready.duplicate(), "government": government, "reform_locked_until": reform_locked_until, "caretaker_until": caretaker_until, "last_succession_day": last_succession_day, "timed_effects": timed_effects.duplicate(true), "next_event_day": next_event_day, "event_last": event_last.duplicate(), "stats": stats.duplicate(), "scouted": scouted.duplicate(), "disrepair": disrepair, "minor": minor, "blurb": blurb, "designated_heir": designated_heir, "lean": lean.duplicate(), "bought": bought.duplicate(),
 		"traits": traits.to_dict(), "ai": ai.to_dict() if ai else {},
 	}
 
@@ -200,6 +211,8 @@ static func from_dict(data: Dictionary) -> Faction:
 	f.ambition_days_left = int(data["ambition_days_left"])
 	f.ambitions_done = data["ambitions_done"]
 	f.ambitions_closed = data["ambitions_closed"]
+	f.decisions_done = data["decisions_done"]
+	f.decision_ready = data["decision_ready"]
 	f.government = data["government"]
 	f.reform_locked_until = int(data["reform_locked_until"])
 	f.caretaker_until = int(data["caretaker_until"])

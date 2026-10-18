@@ -10,7 +10,7 @@ signal first_contact(faction_id: String)
 # Big moments that deserve a pop-up: first contact, war on you, civil war, a leader's death
 signal major_event(title: String, text: String, faction_id: String)
 
-const SAVE_VERSION = 20
+const SAVE_VERSION = 21
 const SAVE_PATH = "user://savegame.sav"
 
 const DAYS_PER_MONTH = 30
@@ -658,12 +658,21 @@ func reach(faction_id: String) -> float:
 		if c.post != "":
 			seated += 1
 			best_steward = maxi(best_steward, int(c.skills["stewardship"]))
-	return GameData.rule("reach_base") + seated * GameData.rule("reach_per_councillor") + best_steward * GameData.rule("reach_per_stewardship")
+	return GameData.rule("reach_base") + seated * GameData.rule("reach_per_councillor") + best_steward * GameData.rule("reach_per_stewardship") + factions[faction_id].effect("reach_bonus")
 
 func _reach_today(faction_id: String) -> float:
 	if not reach_cache.has(faction_id):
 		reach_cache[faction_id] = reach(faction_id)
 	return reach_cache[faction_id]
+
+# Grievance a day on each district still settling in, for holding more than the reach (0 when within it)
+func strain_daily(faction_id: String) -> float:
+	var over: float = held_cache.get(faction_id, 0) - _reach_today(faction_id)
+	return minf(GameData.rule("reach_grievance_cap"), over * GameData.rule("reach_grievance_daily")) if over > 0.0 else 0.0
+
+# The districts that carry the strain: yours, not occupied, still settling in
+func strained_districts(faction_id: String) -> Array:
+	return districts.filter(func(d): return d.owner_id() == faction_id and d.occupier == "" and d.absorb < 1.0)
 
 func add_infamy(faction_id: String, amount: float):
 	if factions.has(faction_id) and amount > 0.0:
@@ -1216,6 +1225,8 @@ func peace_district_cost(d: District) -> float:
 func peace_demands(faction_id: String, other_id: String) -> Array:
 	var r = relation(faction_id, other_id)
 	var list = []
+	if r.claim.get("stage", "") == "war" and r.claim["by"] == other_id:
+		return held_demands(faction_id, other_id)
 	if r.claim.get("stage", "") != "war" or r.claim["by"] != faction_id:
 		return list
 	var goal = GameData.war_goal(r.claim["goal"])
@@ -1237,7 +1248,7 @@ func auto_demands(faction_id: String, other_id: String) -> Array:
 	var demands = peace_demands(faction_id, other_id)
 	if demands.is_empty():
 		return []
-	var budget = war_score(r) - demands[0]["cost"]
+	var budget = side_score(r, faction_id) - demands[0]["cost"]
 	var extras = demands.slice(1)
 	extras.sort_custom(func(a, b): return a["cost"] < b["cost"])
 	var picks = []
@@ -1275,6 +1286,59 @@ func enforce_claim(faction_id: String, other_id: String, picks: Array = []) -> S
 			factions[other_id].wealth -= wealth
 			factions[by].wealth += wealth
 	_end_claim_war(r, true)
+	return ""
+
+# War score from one side's view: positive when that side is ahead
+func side_score(r: Relation, faction_id: String) -> float:
+	if r.claim.is_empty():
+		return 0.0
+	return war_score(r) * (1.0 if r.claim["by"] == faction_id else -1.0)
+
+# A defender who has held out (the score is far enough their way) may dictate terms (doc 20, defender's victory):
+# the claim fails and the claimant pays reparations; spare score buys the districts the defender holds, or tribute
+func check_hold(faction_id: String, other_id: String) -> String:
+	var r = relation(faction_id, other_id)
+	if r.claim.get("stage", "") != "war" or r.claim["by"] != other_id:
+		return "They have no war goal against you"
+	var need: float = GameData.rule("held_price")
+	if side_score(r, faction_id) >= need:
+		return ""
+	return "War score %d of %d needed. Hold their raids off, occupy their districts, or outlast them" % [side_score(r, faction_id), need]
+
+func held_demands(defender_id: String, claimant_id: String) -> Array:
+	var reparations = minf(float(GameData.rule("war_defeat_wealth")), factions[claimant_id].wealth)
+	var list = [{"id": "goal", "label": "Their claim fails and they pay %d wealth" % reparations, "cost": float(GameData.rule("held_price")), "kind": "goal"}]
+	for d in occupied_by(defender_id, claimant_id):
+		list.append({"id": "d:%d" % d.id, "label": "Take %s" % d.district_name, "cost": peace_district_cost(d), "kind": "district"})
+	var wealth = minf(float(GameData.rule("peace_tribute_wealth")), factions[claimant_id].wealth)
+	list.append({"id": "tribute", "label": "More tribute: %d wealth" % wealth, "cost": float(GameData.rule("peace_tribute_cost")), "kind": "tribute"})
+	return list
+
+func enforce_hold(defender_id: String, claimant_id: String, picks: Array = []) -> String:
+	var err = check_hold(defender_id, claimant_id)
+	if err != "":
+		return err
+	var r = relation(defender_id, claimant_id)
+	var demands = held_demands(defender_id, claimant_id)
+	var budget = side_score(r, defender_id) - demands[0]["cost"]
+	var chosen = []
+	var spend = 0.0
+	for id in picks:
+		for demand in demands:
+			if demand["id"] == id and id != "goal":
+				chosen.append(demand)
+				spend += demand["cost"]
+	if spend > maxf(budget, 0.0):
+		return "Those demands cost %d war score; you have %d to spend after the goal" % [spend, maxf(budget, 0.0)]
+	for demand in chosen:
+		if demand["kind"] == "district":
+			_transfer_district(districts[int(demand["id"].substr(2))], defender_id)
+			add_infamy(defender_id, GameData.rule("infamy_extra_district"))
+		elif demand["kind"] == "tribute":
+			var wealth = minf(float(GameData.rule("peace_tribute_wealth")), factions[claimant_id].wealth)
+			factions[claimant_id].wealth -= wealth
+			factions[defender_id].wealth += wealth
+	_end_claim_war(r, false)
 	return ""
 
 # A district changes hands at the peace table (the only place ownership changes in a war)
@@ -3880,9 +3944,9 @@ func _simulate_district(d: District):
 			var restless = GameData.rule("absorb_grievance_daily") * (1.0 - d.absorb)
 			d.grievance += restless
 			_sim_grievance(d, "unsettled", restless)
-		var over = held_cache.get(owner, 0) - _reach_today(owner)
-		if over > 0:
-			var stretched = minf(GameData.rule("reach_grievance_cap"), over * GameData.rule("reach_grievance_daily"))
+		# Past your reach the strain falls on the land you added last: districts still settling in (doc 22)
+		var stretched = strain_daily(owner)
+		if stretched > 0.0 and d.absorb < 1.0:
 			d.grievance += stretched
 			_sim_grievance(d, "overstretched", stretched)
 	if claimants >= 2:
@@ -4171,12 +4235,12 @@ const EVENT_NEEDS = ["", "school", "councillor", "match", "house_match"]
 # Who a "marry" option weds: a captain or councillor, someone from the people, or one of a house
 const MARRY_KINDS = ["captain", "people", "house"]
 const EVENT_EFFECTS = ["wealth_income_mult", "trade_income_mult", "food_mult", "scavenge_yield_mult", "defence_mult",
-	"diplomacy_mult", "crew_cap_mult", "owned_daily_grievance", "split_chance_mult", "heir_claim", "demand_acceptance_mult"]
+	"diplomacy_mult", "crew_cap_mult", "owned_daily_grievance", "split_chance_mult", "heir_claim", "demand_acceptance_mult", "reach_bonus"]
 # How the effects read, for the option buttons and the outliner
 const EFFECT_WORDS = {"wealth_income_mult": "wealth income", "trade_income_mult": "trade income", "food_mult": "food",
 	"scavenge_yield_mult": "scavenging yield", "defence_mult": "attacks on your land", "diplomacy_mult": "treaty acceptance",
 	"crew_cap_mult": "manpower limit", "owned_daily_grievance": "grievance a day", "split_chance_mult": "split chance at a succession",
-	"heir_claim": "the heir's claim", "demand_acceptance_mult": "demands for tribute paid"}
+	"heir_claim": "the heir's claim", "demand_acceptance_mult": "demands for tribute paid", "reach_bonus": "districts you can hold well"}
 const EVENT_PULSE_DAYS = [90, 120]
 
 # Choice events waiting for the player's answer: [{"event", "subject", "venture"}] (the game waits on them)
@@ -4715,7 +4779,7 @@ func task_stat_text(faction_id: String, venture_id: String, d: District) -> Stri
 const AMBITION_CONDITIONS = ["districts_held", "secured_districts", "buildings_owned", "building_type", "trade_agreements",
 	"alliances", "vassals", "crew_total", "traits_active", "population", "districts_conquered", "wars_won",
 	"trait", "treaties", "raided_or_war", "food_short", "materials_below", "council_loyalty_below", "split_risk",
-	"leader_skill", "leader_trait", "ambitions_done", "ambition_done", "recent_succession", "grievance_below", "at_peace"]
+	"leader_skill", "leader_trait", "ambitions_done", "ambition_done", "recent_succession", "grievance_below", "at_peace", "past_gang", "over_reach"]
 
 # Whether one requirement holds, and how to say it: [met, "Militaristic", "2 treaties (you have 1)"]
 func condition_status(faction_id: String, condition: Dictionary) -> Array:
@@ -4773,6 +4837,11 @@ func condition_status(faction_id: String, condition: Dictionary) -> Array:
 			return [average < condition["amount"], "average grievance under %d (now %d)" % [condition["amount"], average]]
 		"at_peace":
 			return [not at_war_with_anyone(faction_id), "at peace"]
+		"over_reach":
+			var held_now = districts_held(faction_id)
+			return [held_now > reach(faction_id), "more land than your reach (you hold %d of %d)" % [held_now, roundi(reach(faction_id))]]
+		"past_gang":
+			return [f.government != "gang", "a government past the gang crew (a reform, in Ambitions)"]
 	var have = measure(faction_id, condition)
 	var names = {"districts_held": "districts", "secured_districts": "Secured districts", "buildings_owned": "buildings", "trade_agreements": "trade agreements",
 		"alliances": "alliances", "vassals": "tributaries", "building_type": GameData.building(condition.get("building", "market"))["label"] + "s"}
@@ -4864,6 +4933,92 @@ func _update_ambitions():
 			major_event.emit(def["label"], "Your crew has achieved %s. From now on: %s." % [def["label"], def["bonus_text"]], "")
 		elif player_met.has(f.id):
 			event.emit("The %s achieved %s: %s." % [f.display_name, def["label"], def["bonus_text"]], "info")
+
+# --- Decisions (doc 21) ----------------------------------------------------------------------------
+# Instant and deterministic: pay, and the change takes hold at once. They change how the faction is run, they don't act
+# on the world, so there is no crew and no odds (anything with those is a venture).
+
+const DECISION_INSTANT = ["manpower", "owned_grievance", "strip_building"]
+
+# What a decision costs now: its fixed cost plus any amount for each district held
+func decision_cost(faction_id: String, decision_id: String) -> Dictionary:
+	var def = GameData.decision(decision_id)
+	var cost: Dictionary = def["cost"].duplicate()
+	for resource_type in def.get("cost_per_district", {}):
+		cost[resource_type] = cost.get(resource_type, 0.0) + def["cost_per_district"][resource_type] * districts_held(faction_id)
+	return cost
+
+func decision_options(faction_id: String, decision_id: String) -> Array:
+	var options = []
+	for option in GameData.decision(decision_id)["requires"]:
+		options.append(option.map(func(condition): return condition_status(faction_id, condition)))
+	return options
+
+# "" if the faction can take this decision now, otherwise why not (and what to do about it)
+func check_decision(faction_id: String, decision_id: String) -> String:
+	var f: Faction = factions[faction_id]
+	var def = GameData.decision(decision_id)
+	if def.get("once", false) and decision_id in f.decisions_done:
+		return "Already done"
+	var ready = int(f.decision_ready.get(decision_id, 0))
+	if day < ready:
+		return "Ready again in %d days" % (ready - day)
+	var options = decision_options(faction_id, decision_id)
+	if not options.any(func(option): return option.all(func(s): return s[0])):
+		return "Needs " + " or ".join(options.map(func(option): return " and ".join(option.filter(func(s): return not s[0]).map(func(s): return s[1]))))
+	var cost = decision_cost(faction_id, decision_id)
+	if not f.can_afford(cost):
+		return f.shortfall(cost)
+	return ""
+
+func take_decision(faction_id: String, decision_id: String) -> String:
+	var err = check_decision(faction_id, decision_id)
+	if err != "":
+		return err
+	var f: Faction = factions[faction_id]
+	var def = GameData.decision(decision_id)
+	f.pay(decision_cost(faction_id, decision_id))
+	var instant: Dictionary = def.get("instant", {})
+	if instant.has("manpower"):
+		f.manpower += int(instant["manpower"])
+	if instant.has("owned_grievance"):
+		for d in districts:
+			if d.owner_id() == faction_id:
+				d.grievance = clampf(d.grievance + float(instant["owned_grievance"]), 0.0, 100.0)
+	if instant.has("strip_building"):
+		_strip_a_building(faction_id, float(instant["strip_building"]))
+	if def.has("timed"):
+		f.timed_effects.append({"label": def["label"], "choice": "Decision", "summary": def["result"], "until": day + int(def["timed"]["days"]),
+			"effects": def["timed"].get("effects", {}).duplicate(), "venture_odds": {}, "skill_odds": {}})
+	if def.get("once", false):
+		f.decisions_done.append(decision_id)
+	else:
+		f.decision_ready[decision_id] = day + int(def["cooldown"])
+	f.effect_cache.clear()
+	if faction_id == player_id:
+		event.emit("Decision: %s. %s" % [def["label"], def["result"]], "good")
+	elif player_met.has(faction_id):
+		event.emit("The %s took a decision: %s." % [f.display_name, def["label"].to_lower()], "info")
+	return ""
+
+# Takes the fittings out of one of the faction's buildings (the one that cost most) for a share of its materials
+func _strip_a_building(faction_id: String, share: float):
+	var best_district: District = null
+	var best_index = -1
+	var best_value = -1.0
+	for d in districts:
+		if d.owner_id() != faction_id:
+			continue
+		for i in d.buildings.size():
+			var value: float = GameData.building(d.buildings[i])["cost"].get("materials", 0.0)
+			if value > best_value:
+				best_value = value
+				best_district = d
+				best_index = i
+	if best_district == null:
+		return
+	factions[faction_id].materials += ceilf(best_value * share)
+	best_district.buildings.remove_at(best_index)
 
 # --- Government reforms (S4b, doc 12) --------------------------------------------------------
 

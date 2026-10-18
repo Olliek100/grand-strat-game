@@ -69,6 +69,8 @@ func _setup(scenario: String):
 			_open_window.call_deferred("economy", "economy")
 		"ambitions":
 			_open_window("ambitions", "ambitions")
+		"decisions":
+			_open_window("ambitions", "decisions")
 		"deeds":
 			_open_window("ambitions", "deeds")
 		"government":

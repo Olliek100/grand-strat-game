@@ -2,7 +2,7 @@ extends Control
 
 # Real seconds per game day at speeds 1-5 (index 0 unused: that's "paused")
 const PlayLog = preload("res://play_log.gd")
-const SECONDS_PER_DAY = [0.0, 1.0, 0.5, 0.25, 0.1, 0.04]
+const SECONDS_PER_DAY = [0.0, 1.0, 0.5, 0.25, 0.1, 0.08]
 const LOG_COLORS = {"info": "#c9c9c9", "good": "#8bd48b", "bad": "#e3876f", "alert": "#ffb347"}
 # Id for dropdown rows that aren't a person ("Appoint...", "No captain is free"). Not -1: Godot turns -1 into the row's index
 const NO_PICK = -3
@@ -55,6 +55,7 @@ var reform_box: VBoxContainer
 var reform_signature: String = ""
 var ambition_intro: RichTextLabel
 var ambition_cards: Dictionary = {}
+var decision_cards: Dictionary = {}
 # Deeds tab
 var ambitions_info: RichTextLabel
 # The closest unfinished ambitions, each a label and a progress bar
@@ -885,6 +886,17 @@ func _build_ambitions_window():
 			if GameData.national_ambition(id)["kind"] == kind:
 				ambition_cards[id] = _make_ambition_card(id)
 				page.add_child(ambition_cards[id]["root"])
+	var decisions_page = _page("ambitions", "decisions", "Decisions")
+	var decision_kinds = []
+	for id in GameData.decisions():
+		if GameData.decision(id)["kind"] not in decision_kinds:
+			decision_kinds.append(GameData.decision(id)["kind"])
+	for kind in decision_kinds:
+		decisions_page.add_child(_header(kind))
+		for id in GameData.decisions():
+			if GameData.decision(id)["kind"] == kind:
+				decision_cards[id] = _make_decision_card(id)
+				decisions_page.add_child(decision_cards[id]["root"])
 	var milestones = _page("ambitions", "deeds", "Deeds")
 	ambitions_info = _rich()
 	milestones.add_child(ambitions_info)
@@ -944,6 +956,7 @@ func _refresh_open_window():
 			_refresh_traits()
 		"ambitions":
 			_refresh_ambition_cards()
+			_refresh_decision_cards()
 			_refresh_ambitions()
 		"wargoal":
 			_refresh_wargoal()
@@ -1126,9 +1139,14 @@ func _refresh_top_bar():
 		p.renown, p.reputation, ("\n\nPursuing %s: %d days left." % [GameData.national_ambition(p.ambition)["label"], p.ambition_days_left]) if p.ambition != "" else "\n\nNo ambition under way."])
 	var held = city.districts_held(p.id)
 	var reach = city.reach(p.id)
-	_chip("districts", "Land %d/%d" % [held, roundi(reach)], 0.0 if held <= reach else -1.0, "Districts held: %d, of the %d your council can administer well (your reach: %d to begin with, one more for each seated councillor, and more for the best Stewardship).%s\nThe first %d cost no administration; after that the cost climbs faster than your territory (now %.2f wealth a day)." % [
-		held, roundi(reach), GameData.rule("reach_base"), (" You are over it: every district grumbles a little more each day." if held > reach else ""),
-		GameData.rule("admin_free_districts"), city.admin_upkeep(p.id)])
+	var strain_text = ""
+	if held > reach:
+		var settling = city.strained_districts(p.id)
+		strain_text = "\n\nStrain: you hold %d more than your reach. The %d district%s still settling in (your newest land) each gain %.1f grievance a day; older land is unaffected. Ways out: more reach (seat councillors, a better Steward, a records office in Decisions), Open the city's tables (Decisions) to calm everyone for a while, or Relief on the angry ones." % [
+			held - ceili(reach), settling.size(), "" if settling.size() == 1 else "s", city.strain_daily(p.id)]
+	_chip("districts", "Land %d/%d%s" % [held, roundi(reach), " strained" if held > reach else ""], 0.0 if held <= reach else -1.0, "Districts held: %d, of the %d your council can administer well (your reach: %d to begin with, one more for each seated councillor, and more for the best Stewardship).\nThe first %d cost no administration; after that the cost climbs faster than your territory (now %.2f wealth a day).%s" % [
+		held, roundi(reach), GameData.rule("reach_base"),
+		GameData.rule("admin_free_districts"), city.admin_upkeep(p.id), strain_text])
 	resource_chips["infamy"].visible = p.infamy >= 1.0
 	_chip("infamy", "Infamy %d" % p.infamy, -1.0 if p.infamy >= GameData.rule("infamy_block") else 0.0, "Infamy: what taking land, raiding and breaking your word have earned you. It fades slowly. Others think less of you each month (now %+d opinion a month), treaties are harder to get (nobody signs above %d), and neighbours are likelier to turn on you." % [-p.infamy * GameData.rule("infamy_opinion_factor"), GameData.rule("infamy_block")])
 
@@ -2516,8 +2534,9 @@ func _refresh_peace():
 	var footer = HBoxContainer.new()
 	footer.alignment = BoxContainer.ALIGNMENT_END
 	footer.add_theme_constant_override("separation", 8)
-	if mine:
-		box.add_child(_header("Your demands"))
+	var can_dictate = has_goal and not mine and city.check_hold(me, fid) == ""
+	if mine or can_dictate:
+		box.add_child(_header("Your demands" if mine else "You held out: your terms"))
 		var demands = city.peace_demands(me, fid)
 		var budget = score - demands[0]["cost"]
 		var spent = 0.0
@@ -2530,14 +2549,15 @@ func _refresh_peace():
 			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			b.disabled = id == "goal"
 			box.add_child(b)
-		var err = city.check_enforce(me, fid)
+		var err = city.check_enforce(me, fid) if mine else city.check_hold(me, fid)
 		box.add_child(_wg_label("Score to spend after the goal: [b]%d[/b], chosen %d%s" % [maxf(budget, 0.0), spent, "" if err == "" else "\n[color=#e3876f]✗ %s[/color]" % err]))
-		var enforce = _button("Enforce demands", func(): _peace_enforce())
+		var enforce = _button("Enforce demands" if mine else "Dictate terms", func(): _peace_enforce())
 		enforce.disabled = err != "" or spent > maxf(budget, 0.0)
-		enforce.tooltip_text = err if err != "" else ("Costs more war score than you have" if spent > maxf(budget, 0.0) else "Takes the goal and the demands ticked, ends the war, and a truce of %d days follows." % GameData.rule("truce_war_days"))
+		enforce.tooltip_text = err if err != "" else ("Costs more war score than you have" if spent > maxf(budget, 0.0) else ("Takes the goal and the demands ticked, ends the war, and a truce of %d days follows." if mine else "Their claim fails, they pay reparations, you take what is ticked, and a truce of %d days follows.") % GameData.rule("truce_war_days"))
 		footer.add_child(enforce)
 	elif has_goal:
 		box.add_child(_header("Their demands"))
+		box.add_child(_wg_label("[color=#999999]%s[/color]" % city.check_hold(me, fid)))
 		var theirs = city.peace_demands(fid, me)
 		box.add_child(_wg_label("If they win they can take: %s." % city.claim_text(r, me)))
 		if theirs.size() > 1:
@@ -2558,7 +2578,8 @@ func _refresh_peace():
 		box.add_child(_wg_label("[color=#999999]White peace: %s[/color]" % peace_err))
 
 func _peace_enforce():
-	var err = city.enforce_claim(city.player_id, peace_fid, peace_picks)
+	var r = city.relation(city.player_id, peace_fid)
+	var err = city.enforce_claim(city.player_id, peace_fid, peace_picks) if r.claim.get("by", "") == city.player_id else city.enforce_hold(city.player_id, peace_fid, peace_picks)
 	if err != "":
 		_log(err, "bad")
 	peace_picks = []
@@ -2940,6 +2961,52 @@ func _refresh_ambitions():
 		row["bar"].visible = true
 		row["bar"].max_value = progress[1]
 		row["bar"].value = progress[0]
+
+# One Decision: what it does, what you need, and the button that takes it (the cost sits on the button)
+func _make_decision_card(id: String) -> Dictionary:
+	var panel = PanelContainer.new()
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0.13, 0.14, 0.16)
+	style.border_color = Color(0.25, 0.27, 0.3)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(3)
+	style.set_content_margin_all(6)
+	panel.add_theme_stylebox_override("panel", style)
+	var box = VBoxContainer.new()
+	box.add_theme_constant_override("separation", 3)
+	panel.add_child(box)
+	var info = _rich()
+	box.add_child(info)
+	var take = _button("Take", func(): _on_take_decision(id))
+	take.size_flags_horizontal = Control.SIZE_SHRINK_END
+	box.add_child(take)
+	return {"root": panel, "style": style, "info": info, "button": take}
+
+func _on_take_decision(id: String):
+	var err = city.take_decision(city.player_id, id)
+	if err != "":
+		_log(err, "bad")
+	_refresh()
+
+# Each card: ready, on cooldown, done, or what is still missing (ticked, as on the ambition cards)
+func _refresh_decision_cards():
+	var p = _player()
+	for id in decision_cards:
+		var def = GameData.decision(id)
+		var w = decision_cards[id]
+		var err = city.check_decision(p.id, id)
+		var done = def.get("once", false) and id in p.decisions_done
+		var status = "[color=#8bd48b]Done[/color]" if done else ("[color=#8bd48b]You can take this[/color]" if err == "" else ("[color=#999999]Not yet[/color]" if err.begins_with("Needs") else "[color=#999999]%s[/color]" % err))
+		w["button"].visible = not done
+		w["button"].disabled = err != ""
+		w["button"].tooltip_text = err
+		w["button"].text = "Take  ·  %s" % (_cost_text(city.decision_cost(p.id, id)) if not city.decision_cost(p.id, id).is_empty() else "costs no resources")
+		w["style"].border_color = Color(0.35, 0.55, 0.35) if done else (Color(0.85, 0.7, 0.35) if err == "" else Color(0.25, 0.27, 0.3))
+		var lines = ["[b]%s[/b]  %s" % [def["label"], status], "[color=#b8a988]%s[/color]" % def["description"], "[color=#8bd48b]Does:[/color] %s" % def["result"]]
+		if not done:
+			var texts = city.decision_options(p.id, id).map(func(option): return " + ".join(option.map(func(s): return ("[color=#8bd48b]✓ %s[/color]" if s[0] else "[color=#e3876f]✗ %s[/color]") % s[1])))
+			lines.append("Needs: " + "  [color=#999999]or[/color]  ".join(texts))
+		w["info"].text = "\n".join(lines)
 
 # One National Ambition: what it gives, what it takes, what you need, and the button to start it
 func _make_ambition_card(id: String) -> Dictionary:
@@ -4249,7 +4316,8 @@ Where you can name an heir, passing over the natural heir costs loyalty: the nat
 	_explain("economy", "economy", "Where your food, materials and wealth come from and go, each day. Hover the resources in the top bar for the same, in short.")
 	_explain("economy", "traits", "Your faction's identity grows from what you do, and from your leader's nature. Hover a trait for what it gives and costs.")
 	_explain("ambitions", "ambitions", "National Ambitions: choose a direction and pay renown to pursue it. One at a time; each takes weeks, then its bonus lasts for good. What you can pursue depends on your traits and situation, and some choices close others for good. Some unlock a change of government. Other factions pursue theirs too: see their card in Diplomacy.")
-	_explain("ambitions", "deeds", "Deeds: milestones every faction can reach. Each pays renown once. Renown you earn also adds to your reputation, which never goes down and keeps your crew and captain limits, better recruits and your heir's claim.")
+	_explain("ambitions", "decisions", "Decisions: instant choices about how you run things. Pay, and the change takes hold at once: some last a while, some are for good. No crew and no odds (those are ventures). Desperation ones open when you are in trouble; each can be taken again after its cooldown, and institutions only once. Other factions take them from the same list.")
+	_explain("ambitions", "deeds","Deeds: milestones every faction can reach. Each pays renown once. Renown you earn also adds to your reputation, which never goes down and keeps your crew and captain limits, better recruits and your heir's claim.")
 	_explain("log", "log", "Everything that's happened. Filter to what's about you, your neighbours, or everyone.")
 
 # --- Right-click on any portrait: what you can do with this person (CK-style) ---------------------

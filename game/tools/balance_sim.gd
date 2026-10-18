@@ -32,6 +32,7 @@ const WATCH = {
 	"ambitions": "achieved ",
 	"wounds": "was wounded",
 	"claims": "justifying a claim",
+	"decisions": "Decision: ",
 	"gave_in": "gave in to the",
 	"goal_won": "have won (",
 	"goal_failed": "held out against",

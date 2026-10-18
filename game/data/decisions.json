@@ -1,0 +1,74 @@
+{
+	"ration_stores": {
+		"label": "Ration the stores", "kind": "Desperation", "ai_goal": "stabilize", "ai_value": 1.2, "cooldown": 360,
+		"description": "Everyone eats less so the stores last. Tempers fray.",
+		"requires": [[{"type": "food_short", "below": 0.0}]],
+		"cost": {},
+		"timed": {"days": 60, "effects": {"food_mult": 1.2, "owned_daily_grievance": 0.03}},
+		"result": "Rations are cut for 60 days."
+	},
+	"press_volunteers": {
+		"label": "Press volunteers", "kind": "Desperation", "ai_goal": "defend", "ai_value": 1.2, "cooldown": 360,
+		"description": "With a threat at the door, every able hand is told to take a post. Nobody thanks you.",
+		"requires": [[{"type": "raided_or_war", "days": 60}]],
+		"cost": {},
+		"instant": {"manpower": 6, "owned_grievance": 3.0},
+		"result": "Six more hands take a post. Your districts resent it."
+	},
+	"strip_a_building": {
+		"label": "Strip a building for parts", "kind": "Desperation", "ai_goal": "materials", "ai_value": 1.0, "cooldown": 180,
+		"description": "Tear the fittings out of one of your buildings and sell them on for materials.",
+		"requires": [[{"type": "materials_below", "amount": 5}, {"type": "buildings_owned", "amount": 1}]],
+		"cost": {},
+		"instant": {"strip_building": 0.5},
+		"result": "A building is gone and its fittings are in the stores."
+	},
+	"market_day": {
+		"label": "Market day", "kind": "Running things", "ai_goal": "income", "ai_value": 0.5, "cooldown": 360,
+		"description": "Open the roads and the stalls for a day. Traders hear of it and come back.",
+		"requires": [[{"type": "districts_held", "amount": 3}]],
+		"cost": {"wealth": 40},
+		"timed": {"days": 90, "effects": {"trade_income_mult": 1.2}},
+		"result": "Trade income is up for 90 days."
+	},
+	"pay_the_watch": {
+		"label": "Pay the watch", "kind": "Running things", "ai_goal": "defend", "ai_value": 0.5, "cooldown": 360,
+		"description": "Wages for people who walk the streets at night, so others don't have to.",
+		"requires": [[{"type": "districts_held", "amount": 2}]],
+		"cost": {"wealth": 30},
+		"timed": {"days": 180, "effects": {"owned_daily_grievance": -0.03, "defence_mult": 0.9}},
+		"result": "Grievance falls and attacks on your land are harder for 180 days."
+	},
+	"district_feast": {
+		"label": "A feast for the district", "kind": "Running things", "ai_goal": "stabilize", "ai_value": 0.5, "cooldown": 180,
+		"description": "Food and noise for everyone. It buys a little goodwill, once.",
+		"requires": [[{"type": "districts_held", "amount": 2}]],
+		"cost": {"wealth": 25},
+		"instant": {"owned_grievance": -4.0},
+		"result": "Your districts are calmer."
+	},
+	"open_the_tables": {
+		"label": "Open the city's tables", "kind": "Running things", "ai_goal": "stabilize", "ai_value": 0.9, "cooldown": 360,
+		"description": "A feast for the whole city, paid from your stores. It does not cure having more land than you can run, but it buys time.",
+		"requires": [[{"type": "over_reach"}]],
+		"cost": {"wealth": 10}, "cost_per_district": {"wealth": 3},
+		"instant": {"owned_grievance": -10.0},
+		"result": "Every district you hold is calmer."
+	},
+	"records_office": {
+		"label": "Open a records office", "kind": "Institutions", "ai_goal": "control", "ai_value": 0.8, "once": true,
+		"description": "Someone keeps the books on who owns, owes and works what. You can govern more land well.",
+		"requires": [[{"type": "leader_skill", "skill": "stewardship", "amount": 3}], [{"type": "buildings_owned", "amount": 3}]],
+		"cost": {"wealth": 80},
+		"permanent": {"effects": {"reach_bonus": 1.0}},
+		"result": "Your reach grows by one district, for good."
+	},
+	"set_up_a_court": {
+		"label": "Set up a court", "kind": "Institutions", "ai_goal": "control", "ai_value": 0.8, "once": true,
+		"description": "Disputes go to a bench instead of a knife. Successions go smoother and tempers are lower.",
+		"requires": [[{"type": "past_gang"}]],
+		"cost": {"wealth": 100},
+		"permanent": {"effects": {"split_chance_mult": 0.85, "owned_daily_grievance": -0.01}},
+		"result": "Your districts are calmer for good, and a succession is less likely to split you."
+	}
+}

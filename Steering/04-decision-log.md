@@ -2,6 +2,21 @@
 
 Decisions that still stand: each with what was rejected and why. New entries go at the top. Check this before relitigating a settled question. Per-build detail (numbers, tuning, simulation results) is in /CHANGELOG.md.
 
+**2026-10-16 (strain, owner's answers to doc 22)**
+
+- **Going over your reach strains only the land you added last** (districts still settling in), not every district. The answers are realm-wide choices (more reach, Open the city's tables), not clicking Relief on each district. Rejected: a flat penalty on every district (the fix was a chore, not a decision).
+- **Building tiers come next, and each upgrade costs more than the last.** The save version will go up for it; the owner doesn't mind losing old saves.
+
+**2026-10-16 (Decisions, owner chose the recommended options)**
+
+- **Decisions are instant and deterministic, in a tab of the Ambitions window.** They change how a faction is run, they don't act on the world, so they are not a second verb: anything with a crew, odds or days to land stays a venture. Three kinds: desperation (open only in trouble; the way out of a stuck position), running things (cooldown) and institutions (once). Locked ones say what is missing. Rejected: their own window and hotkey (Ambitions is already "how you run things"), council approval for these (that is the later policies and reforms layer).
+- **The gang arc stays the logged spine** (anarchic gangs to an organised city); the opening-and-emergence outline is context, not a plan, until the owner agrees parts of it.
+
+**2026-10-14 (a defender's victory, owner chose option 2)**
+
+- **A defender whose war score reaches 65 can dictate terms:** the claim fails, the claimant pays reparations, and spare score buys districts the defender occupies (same prices as a claimant's) or extra tribute. Ten-year truce, as for any ended war. The AI follows the same rule. Rejected: reparations only (a counter-attack earned nothing); also a renown penalty on the failed claimant (aggression already risks the war; revisit if attackers get too bold).
+- **Threshold 65, not 50:** at 50 defenders won after 36 days on average, before the war had properly begun.
+
 **2026-10-14 (death risk, owner's decision)**
 
 - **Death follows age; ventures carry the rest.** A leader is no likelier to die of illness than anyone else. A failed venture can kill whoever led it, by how dangerous it is and how long the odds were, so a leader who leads an assault at poor odds takes that risk. Rejected: a flat extra risk for leaders (21% a year at 24: nothing the player could do about it).

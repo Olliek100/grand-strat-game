@@ -121,6 +121,9 @@ Rivals start the same way (same rules, pillar 3), so the city begins mostly empt
 | **W1. War as negotiation** (2026-10-11; doc 20) | An assault occupies and the district pays nobody; war score from occupation, fights and a clock; a peace table; a status-quo white peace; a ten-year truce after a deal; backing off costs renown | Built. Wars mostly end in white peace after about 170 days |
 | **Death risk** (2026-10-14; doc 14) | Risk follows age; a failed venture can kill its leader, by danger and odds | Built. Successions fell from about 10 to about 3 a game and civil wars nearly vanish |
 | **W2-W3. The cost of growth and a bigger map** (2026-10-14; doc 20) | 117 districts and 12 factions; land settles in over months; infamy; reach; Settle slower | Built. **Pacing target not met:** the map still fills by year 3 |
+| **W4. A defender's victory** (2026-10-14; doc 20) | A defender whose war score reaches 65 can dictate terms: the claim fails, reparations, and spare score buys occupied districts or tribute; the AI does the same | Built (v1.44) |
+| **D1. Decisions** (2026-10-16; doc 21) | Eight instant decisions in a tab of Ambitions: desperation, running things, institutions; the AI takes them from the same list | Built (v1.44) |
+| **A1. Strain** (2026-10-16; doc 22 part A) | Going over reach strains only the newest land; one clear chip; Open the city's tables. Building tiers (B1) and Activities (C1-C3) come next | Built (v1.44); tiers next |
 | **S5. Blood** | Bloodlines and marriage between factions, which create pacts, claims and heirs. *Doc 14 splits this: marriage within the faction first (its slice 4), then between factions* | Marriage is worth considering as an alternative to war |
 | **S6. Wider pressure** | Aggression memory and coalitions; the off-map crisis director (vertical slice) | Runaway conquest provokes a readable response |
 | Later | Tech tree; regional map | After the playbox gate |

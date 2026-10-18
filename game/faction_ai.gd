@@ -166,6 +166,9 @@ func _think_war(city: CityMap):
 			if city.check_enforce(faction_id, enemy_id) == "":
 				city.enforce_claim(faction_id, enemy_id, city.auto_demands(faction_id, enemy_id))
 				continue
+			if city.check_hold(faction_id, enemy_id) == "":
+				city.enforce_hold(faction_id, enemy_id, city.auto_demands(faction_id, enemy_id))
+				continue
 			var mine: float = r.exhaustion[faction_id]
 			var war_days = city.day - r.war_start_day
 			# Sue for peace when worn down, or when a war has dragged on with no end
@@ -395,6 +398,9 @@ func _best_at_home(city: CityMap) -> Dictionary:
 	var pursuit = _best_ambition(city)
 	if pursuit["id"] != "" and pursuit["score"] > best["score"]:
 		best = {"score": pursuit["score"], "act": func(): city.start_ambition(faction_id, pursuit["id"])}
+	var decision = _best_decision(city)
+	if decision["id"] != "" and decision["score"] > best["score"]:
+		best = {"score": decision["score"], "act": func(): city.take_decision(faction_id, decision["id"])}
 	var reform = _best_reform(city)
 	if reform["id"] != "" and reform["score"] > best["score"]:
 		best = {"score": reform["score"], "act": func(): city.take_reform(faction_id, reform["id"])}
@@ -428,6 +434,25 @@ func _best_ambition(city: CityMap) -> Dictionary:
 		if city.check_ambition(faction_id, id) != "":
 			continue
 		var def = GameData.national_ambition(id)
+		var score = def["ai_value"] * temperament(def["ai_goal"], me) * GameData.rule("ai_ambition_weight") * city.rng.randf_range(0.7, 1.3)
+		if score > best["score"]:
+			best = {"id": id, "score": score}
+	return best
+
+# The decision it most wants, by the same list and rules as the player's (doc 21). It keeps a reserve of whatever it would spend
+func _best_decision(city: CityMap) -> Dictionary:
+	var me: Faction = city.factions[faction_id]
+	var best = {"id": "", "score": 0.0}
+	for id in GameData.decisions():
+		if city.check_decision(faction_id, id) != "":
+			continue
+		var def = GameData.decision(id)
+		var spare = true
+		for resource_type in city.decision_cost(faction_id, id):
+			if me.get(resource_type) < city.decision_cost(faction_id, id)[resource_type] * 2.0:
+				spare = false
+		if not spare:
+			continue
 		var score = def["ai_value"] * temperament(def["ai_goal"], me) * GameData.rule("ai_ambition_weight") * city.rng.randf_range(0.7, 1.3)
 		if score > best["score"]:
 			best = {"id": id, "score": score}
