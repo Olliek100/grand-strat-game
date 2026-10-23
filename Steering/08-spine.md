@@ -124,6 +124,8 @@ Rivals start the same way (same rules, pillar 3), so the city begins mostly empt
 | **W4. A defender's victory** (2026-10-14; doc 20) | A defender whose war score reaches 65 can dictate terms: the claim fails, reparations, and spare score buys occupied districts or tribute; the AI does the same | Built (v1.44) |
 | **D1. Decisions** (2026-10-16; doc 21) | Eight instant decisions in a tab of Ambitions: desperation, running things, institutions; the AI takes them from the same list | Built (v1.44) |
 | **A1. Strain** (2026-10-16; doc 22 part A) | Going over reach strains only the newest land; one clear chip; Open the city's tables. Building tiers (B1) and Activities (C1-C3) come next | Built (v1.44); tiers next |
+| **AI1. Open land first** (2026-10-18) | An AI with open land in reach doesn't raid strangers or start wars over a neighbour's land, and prefers open ground to a rival's doorstep | Built (v1.45). Side effect: the map fills about a year sooner |
+| **E1-E4. Richer events** (doc 23) | Option costs and risk with shown odds, triggers during ventures and from situations, passive events, journals, chains, a picture slot | Specified, not built; E1 is next, then building tiers (doc 22 B). Scope map in doc 24 |
 | **S5. Blood** | Bloodlines and marriage between factions, which create pacts, claims and heirs. *Doc 14 splits this: marriage within the faction first (its slice 4), then between factions* | Marriage is worth considering as an alternative to war |
 | **S6. Wider pressure** | Aggression memory and coalitions; the off-map crisis director (vertical slice) | Runaway conquest provokes a readable response |
 | Later | Tech tree; regional map | After the playbox gate |

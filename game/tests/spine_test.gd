@@ -33,6 +33,7 @@ func _init():
 	_test_raiders_and_deterrence()
 	_test_ambitions()
 	_test_decisions()
+	_test_ai_open_land()
 	_test_government()
 	_test_tasks()
 	_test_district_payoffs()
@@ -975,6 +976,34 @@ func _test_raiders_and_deterrence():
 		fresh.advance_day()
 		offers += fresh.proposals.filter(func(x): return x["action"] == "pact" and not fresh.shares_border(x["from"], fresh.player_id)).size()
 	_check("no pact offers from factions that don't border you", offers == 0, str(offers))
+
+# The AI: with open land in reach it doesn't raid a faction it has no quarrel with, and it prefers open ground to a rival's doorstep
+func _test_ai_open_land():
+	var c = CityMap.new()
+	var ai: FactionAI = c.factions["rival"].ai
+	var me: Faction = c.factions["rival"]
+	var target_district: District = null
+	for d in c.districts:
+		if d.owner_id() != "" and d.owner_id() != "rival" and c.claim_reason("rival", d.owner_id()) == "":
+			target_district = d
+			break
+	_check("a quarrel-free target exists for the test", target_district != null)
+	ai.open_land = 3
+	var damped = ai._value("harass", target_district, me, target_district.owner_id(), c)
+	ai.open_land = 0
+	var plain = ai._value("harass", target_district, me, target_district.owner_id(), c)
+	_check("with open land in reach, raiding a stranger is worth far less", plain > 0.0 and damped < plain * 0.5, "%.2f vs %.2f" % [damped, plain])
+	var crowded: District = null
+	var roomy: District = null
+	for d in c.districts:
+		var rivals = d.neighbor_ids.filter(func(n): return c.districts[n].owner_id() != "" and c.districts[n].owner_id() != "rival").size()
+		var open = d.neighbor_ids.filter(func(n): return c.districts[n].owner_id() == "").size()
+		if rivals >= 2 and crowded == null:
+			crowded = d
+		if rivals == 0 and open >= 3 and roomy == null:
+			roomy = d
+	if crowded and roomy:
+		_check("open ground is a better place to expand than a rival's doorstep", ai._openness(c, roomy) > ai._openness(c, crowded))
 
 # Decisions (doc 21): instant, paid on the spot, gated with reasons, repeatable after a cooldown or once only
 func _test_decisions():

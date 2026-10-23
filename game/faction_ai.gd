@@ -19,6 +19,10 @@ var days_until_next_move: int = 3
 var food_net: float = 0.0
 # Set each decision: whether scouted, unclaimed land is ready to settle
 var has_settle_target: bool = false
+# Set each decision: how many unclaimed districts it can reach (its own land's edge, or next to what it has scouted).
+# While there is open land, fighting a neighbour it has no quarrel with is a worse use of a move than claiming it
+var open_land: int = 0
+const OPEN_LAND_RAID_DAMP = 0.25
 var days_until_next_diplomacy: int = 12
 # A planned war: who, and on what day it will be declared ("" / -1 when there's no plan)
 
@@ -51,6 +55,7 @@ func think(city: CityMap):
 		return
 
 	# Whether any scouted, unclaimed land is ready to settle: if not, scouting comes first
+	open_land = _count_open_land(city)
 	has_settle_target = false
 	for d in city.districts:
 		if d.owner_id() == "" and city.knows(faction_id, d) and city.borders_territory(faction_id, d):
@@ -194,6 +199,9 @@ func _think_war(city: CityMap):
 				and city.side_strength(faction_id, enemy_id) >= city.side_strength(enemy_id, faction_id) * 0.7 and city.rng.randf() < 0.3:
 			if city.justify(faction_id, enemy_id, "claim") == "":
 				return
+		# With open land to claim, only the conquest-minded start a war over a neighbour's
+		if _count_open_land(city) >= 2 and temperament("conquer", city.factions[faction_id]) < 1.5 and city.claim_reason(faction_id, enemy_id) == "":
+			continue
 		var appeal = war_appeal(city, enemy_id)
 		if appeal.is_empty() or city.rng.randf() >= 0.4:
 			continue
@@ -513,13 +521,33 @@ func _build_value(goal: String, d: District, me: Faction, city: CityMap) -> floa
 	return 0.0
 
 # How much the faction wants this outcome, before odds
+# Unclaimed districts this faction could act on now
+func _count_open_land(city: CityMap) -> int:
+	var count = 0
+	for d in city.districts:
+		if d.owner_id() == "" and city.can_reach(faction_id, d):
+			count += 1
+	return count
+
+# How good a place to expand into: more with open land around it, less with other factions on its doorstep
+func _openness(city: CityMap, d: District) -> float:
+	var rivals = 0
+	var open = 0
+	for n in d.neighbor_ids:
+		var owner = city.districts[n].owner_id()
+		if owner == "":
+			open += 1
+		elif owner != faction_id:
+			rivals += 1
+	return clampf(1.0 - 0.15 * rivals + 0.1 * open, 0.5, 1.3)
+
 func _value(goal: String, d: District, me: Faction, target_id: String, city: CityMap) -> float:
 	match goal:
 		"expand":
 			# Finish claims already under way before starting new ones. Only a fed faction with a
 			# secure home looks outward in earnest.
 			var ready = food_net >= 0.0 and me.supplies >= 15.0 and _home_secured(city)
-			return (0.5 + d.ruin_level * 0.5 + d.share(faction_id) / 100.0) * (1.0 if ready else 0.3)
+			return (0.5 + d.ruin_level * 0.5 + d.share(faction_id) / 100.0) * (1.0 if ready else 0.3) * _openness(city, d)
 		"food":
 			if food_net < 0.0 or me.supplies < 15.0:
 				return 1.6 + (0.8 if me.supplies < 8.0 else 0.0)
@@ -573,7 +601,10 @@ func _value(goal: String, d: District, me: Faction, target_id: String, city: Cit
 				return 0.0
 			var need = 1.5 if me.supplies < 20.0 or me.materials < 15.0 else 0.8
 			var bold = 1.5 if target_id != "" and city.relation(faction_id, target_id).bold_until[faction_id] > city.day else 1.0
-			return 0.75 * city.raid_worth(d) * need * bold
+			var open_damp = 1.0
+			if open_land > 0 and target_id != "" and not city.is_at_war(faction_id, target_id) and city.claim_reason(faction_id, target_id) == "":
+				open_damp = OPEN_LAND_RAID_DAMP
+			return 0.75 * city.raid_worth(d) * need * bold * open_damp
 		"deter":
 			# Warn off whoever raided us in the last two months
 			var raided_on = city.relation(faction_id, target_id).last_raid[target_id] if target_id != "" else 0

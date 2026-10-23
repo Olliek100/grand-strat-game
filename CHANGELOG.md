@@ -2,6 +2,21 @@
 
 What each build changed, its tuning numbers and simulation results, newest first. Design decisions that still stand are in Steering/04-decision-log.md. From v1.38 on, each build is a git tag.
 
+**2026-10-23 (v1.45, the AI looks for open land first)**
+
+No save change. Details are in the entry below this one.
+- **AIs claim open land before they fight.** With unclaimed land in reach, an AI no longer raids a faction it has no quarrel with or starts a war over a neighbour's land, and it prefers districts with open ground around them. Owner's playtest.
+- **Checks:** regression tests and UI smoke test pass. Sim (6 games of 6 years, seed 100, run on this code): raids about 51 against 34 a game, wars started 104 against 61 (six games), unclaimed districts after year 2 about 17 against 8; wars ended per game: white peace 7.0, attacker won 2.0, defender held out 0.5.
+- **Open:** the map now fills a year sooner, so **the pacing target is further away**; the early-game brakes and the map size are the levers and are untouched. Wars are rarer. Also new: design docs 23 (richer events) and 24 (scope map); event slice E1 comes next, then building tiers.
+
+**2026-10-18 (the AI looks for open land first)**
+
+No save change.
+- **An AI that can reach unclaimed land no longer raids a faction it has no quarrel with** (the raid is worth a quarter; at war, or with a grievance such as being raided, it is unchanged), **and won't start a war over a neighbour's land** unless it is conquest-minded or has that grievance. When it expands, **it prefers districts with open land around them over ones with rivals next door.** Owner's playtest: AIs moved on districts near the player and raided while open land abounded.
+- **Measured (6 games of 6 years, seed 100, before against now):** raids about 51 against 34 a game; wars started 104 against 61 (all six games); unclaimed districts after year 1 about 61 against 54, after year 2 about 17 against 8, after year 3 about 3 against 3.5; broke days 665 against 0. Wars ended per game: white peace 7.0 (was 15.0), attacker won 2.0, defender held out 0.5. Largest faction 82 (it swings 38-88 between runs).
+- **The map fills faster.** The AIs spend their moves claiming instead of fighting, so open land is gone about a year sooner. **This moves the pacing target (the map should not fill by year 3) further away.** The levers are the early game's brakes (what limits a faction's first dozen districts) and a bigger map; I have not touched either.
+- **Tests:** raiding a stranger is worth less with open land in reach; open ground beats a rival's doorstep as a place to expand.
+
 **2026-10-18 (v1.44, defender's victory, Decisions, strain)**
 
 Saves from before this build won't load (save version 21). Details are in the three entries below this one.

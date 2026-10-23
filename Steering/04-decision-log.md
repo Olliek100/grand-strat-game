@@ -2,6 +2,12 @@
 
 Decisions that still stand: each with what was rejected and why. New entries go at the top. Check this before relitigating a settled question. Per-build detail (numbers, tuning, simulation results) is in /CHANGELOG.md.
 
+**2026-10-18 (events may carry risk; AI looks for open land first; owner's decisions)**
+
+- **"Event options cost nothing" (doc 14, decision 1) is retired.** An event option may cost something, risk something or both, with its odds shown before the choice and the same four outcome tiers as a venture. Events are things that come to you, so this is not a second verb. Rejected: keeping events free (they read as flavour, which the owner's playtest called stale).
+- **The Digital Blackout backstory is not written into the game for now.** The owner knows it and wants no player-facing lore text yet. Doc 16's lore stays an outline.
+- **AI with open land to claim doesn't raid a faction it has no quarrel with, and doesn't start a war over a neighbour's land** (unless conquest-minded, or it has a grievance: they raided it, demanded tribute, or bad blood). Open ground away from rivals is preferred when it expands. Rejected: leaving raids and claims to compete on score alone (AIs fought over borders on a half-empty map).
+
 **2026-10-16 (strain, owner's answers to doc 22)**
 
 - **Going over your reach strains only the land you added last** (districts still settling in), not every district. The answers are realm-wide choices (more reach, Open the city's tables), not clicking Relief on each district. Rejected: a flat penalty on every district (the fix was a chore, not a decision).
